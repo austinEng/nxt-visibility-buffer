@@ -1,0 +1,3 @@
+[submodule "external/nxt-standalone"]
+    path = third_party/nxt-standalone
+    url = https://github.com/google/nxt-standalone.git

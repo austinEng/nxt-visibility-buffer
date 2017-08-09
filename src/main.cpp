@@ -1,13 +1,26 @@
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <GLFW/glfw3.h>
+
+#define TINYGLTF_LOADER_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#include <tinygltfloader/tiny_gltf_loader.h>
+
 #include <utils/SystemUtils.h>
 #include "Binding.h"
 #include "Camera.h"
-#include "ViewportThread.h"
+#include "Renderer.h"
+#include "Scene.h"
+#include "Uniforms.h"
+#include "Viewport.h"
+
+uint64_t updateSerial = 1;
+nxt::Device device;
+nxt::Queue queue;
 
 namespace {
     Camera camera;
+    Scene* scenePtr;
 
     bool buttons[GLFW_MOUSE_BUTTON_LAST + 1] = { 0 };
 
@@ -24,18 +37,33 @@ namespace {
 
         if (buttons[2] || (buttons[0] && buttons[1])) {
             camera.Pan(-dX * 0.002f, dY * 0.002f);
+            updateSerial++;
         }
         else if (buttons[0]) {
             camera.Rotate(dX * -0.01f, dY * 0.01f);
+            updateSerial++;
         }
         else if (buttons[1]) {
             camera.Zoom(dY * -0.005f);
+            updateSerial++;
         }
     }
 
     void scrollCallback(GLFWwindow*, double, double yoffset) {
         camera.Zoom(static_cast<float>(yoffset) * 0.04f);
+        updateSerial++;
     }
+
+    void dropCallback(GLFWwindow*, int count, const char** paths) {
+        for (int i = 0; i < count; ++i) {
+            scenePtr->AddModel(std::string(paths[i]));
+        }
+    }
+}
+
+namespace uniform {
+    nxt::BindGroupLayout cameraLayout;
+    nxt::BindGroupLayout modelLayout;
 }
 
 void frame(const nxt::SwapChain& swapchain) {
@@ -46,26 +74,45 @@ void frame(const nxt::SwapChain& swapchain) {
     DoFlush();
 }
 
+void init() {
+    uniform::cameraLayout = device.CreateBindGroupLayoutBuilder()
+        .SetBindingsType(nxt::ShaderStageBit::Vertex, nxt::BindingType::UniformBuffer, 0, 1)
+        .GetResult();
+
+    uniform::modelLayout = device.CreateBindGroupLayoutBuilder()
+        .SetBindingsType(nxt::ShaderStageBit::Vertex, nxt::BindingType::UniformBuffer, 0, 1)
+        .GetResult();
+}
+
 int main(int argc, const char* argv[]) {
     if (!InitializeBackend(argc, argv)) {
         return 1;
     }
 
-    nxt::Device device = CreateCppNXTDevice();
-    nxt::Queue queue = device.CreateQueueBuilder().GetResult();
+    device = CreateCppNXTDevice();
+    queue = device.CreateQueueBuilder().GetResult();
+
+    init();
+
+    Scene scene(device, queue);
+    scenePtr = &scene;
 
     GLFWwindow* window = GetGLFWWindow();
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetCursorPosCallback(window, cursorPosCallback);
     glfwSetScrollCallback(window, scrollCallback);
+    glfwSetDropCallback(window, dropCallback);
 
-    ViewportThread viewportThread(device, queue, camera);
+    Renderer* renderer = new Renderer(device, queue, camera, scene);
+
+    Viewport viewport(device, queue, renderer);
 
     while (!ShouldQuit()) {
         glfwPollEvents();
         utils::USleep(16000);
     }
 
-    viewportThread.Quit();
-    viewportThread.join();
+    viewport.Quit();
+    renderer->Quit();
+    delete renderer;
 }

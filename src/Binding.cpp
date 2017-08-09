@@ -97,6 +97,48 @@ nxt::Device CreateCppNXTDevice() {
     return nxt::Device::Acquire(cDevice);
 }
 
+nxt::Device CreateDevice() {
+    binding = utils::CreateBinding(backendType);
+    if (binding == nullptr) {
+        return nxt::Device();
+    }
+
+    nxtDevice backendDevice;
+    nxtProcTable backendProcs;
+    binding->GetProcAndDevice(&backendProcs, &backendDevice);
+
+    nxtDevice cDevice = nullptr;
+    nxtProcTable procs;
+    switch (cmdBufType) {
+        case CmdBufType::None:
+            procs = backendProcs;
+            cDevice = backendDevice;
+            break;
+
+        case CmdBufType::Terrible:
+            {
+                c2sBuf = new nxt::wire::TerribleCommandBuffer();
+                s2cBuf = new nxt::wire::TerribleCommandBuffer();
+
+                wireServer = nxt::wire::NewServerCommandHandler(backendDevice, backendProcs, s2cBuf);
+                c2sBuf->SetHandler(wireServer);
+
+                nxtDevice clientDevice;
+                nxtProcTable clientProcs;
+                wireClient = nxt::wire::NewClientDevice(&clientProcs, &clientDevice, c2sBuf);
+                s2cBuf->SetHandler(wireClient);
+
+                procs = clientProcs;
+                cDevice = clientDevice;
+            }
+            break;
+    }
+
+    nxtSetProcs(&procs);
+    procs.deviceSetErrorCallback(cDevice, PrintDeviceError, 0);
+    return nxt::Device::Acquire(cDevice);
+}
+
 uint64_t GetSwapChainImplementation() {
     return binding->GetSwapChainImplementation();
 }

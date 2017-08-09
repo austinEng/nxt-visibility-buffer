@@ -9,6 +9,7 @@ bool ShouldQuit();
 struct GLFWwindow;
 struct GLFWwindow* GetGLFWWindow();
 
+nxt::Device CreateDevice();
 nxt::Device CreateCppNXTDevice();
 uint64_t GetSwapChainImplementation();
 nxt::SwapChain GetSwapChain(const nxt::Device& device);

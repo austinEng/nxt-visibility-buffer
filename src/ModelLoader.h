@@ -2,6 +2,7 @@
 #pragma once
 
 #include <functional>
+#include <glm/glm/mat4x4.hpp>
 #include <map>
 #include <nxt/nxtcpp.h>
 #include <tinygltfloader/tiny_gltf_loader.h>
@@ -38,6 +39,16 @@ class Model {
     friend class ModelLoader;
 
 public:
+
+    struct Vertex {
+        glm::vec3 position;
+        unsigned int normal;
+        unsigned int tangent;
+        unsigned int texCoord;
+        unsigned int materialID;
+        unsigned int pad;
+    };
+
     void UpdateCommands(const nxt::Device& device, const nxt::Queue& queue);
 
     const std::vector<RasterCommand>& GetRasterCommands() const;

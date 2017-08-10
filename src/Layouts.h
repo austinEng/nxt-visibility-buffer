@@ -4,7 +4,7 @@
 #include <glm/glm/mat4x4.hpp>
 #include <nxt/nxtcpp.h>
 
-namespace uniform {
+namespace layout {
 
     struct camera_block {
         glm::mat4 viewProj;
@@ -16,4 +16,5 @@ namespace uniform {
 
     extern nxt::BindGroupLayout cameraLayout;
     extern nxt::BindGroupLayout modelLayout;
+    extern nxt::BindGroupLayout computeBufferLayout;
 }

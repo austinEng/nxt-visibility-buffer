@@ -11,7 +11,7 @@
 #include "Camera.h"
 #include "Renderer.h"
 #include "Scene.h"
-#include "Uniforms.h"
+#include "Layouts.h"
 #include "Viewport.h"
 
 uint64_t updateSerial = 1;
@@ -61,9 +61,10 @@ namespace {
     }
 }
 
-namespace uniform {
+namespace layout {
     nxt::BindGroupLayout cameraLayout;
     nxt::BindGroupLayout modelLayout;
+    nxt::BindGroupLayout computeBufferLayout;
 }
 
 void frame(const nxt::SwapChain& swapchain) {
@@ -75,12 +76,16 @@ void frame(const nxt::SwapChain& swapchain) {
 }
 
 void init() {
-    uniform::cameraLayout = device.CreateBindGroupLayoutBuilder()
-        .SetBindingsType(nxt::ShaderStageBit::Vertex, nxt::BindingType::UniformBuffer, 0, 1)
+    layout::cameraLayout = device.CreateBindGroupLayoutBuilder()
+        .SetBindingsType(nxt::ShaderStageBit::Vertex | nxt::ShaderStageBit::Compute, nxt::BindingType::UniformBuffer, 0, 1)
         .GetResult();
 
-    uniform::modelLayout = device.CreateBindGroupLayoutBuilder()
-        .SetBindingsType(nxt::ShaderStageBit::Vertex, nxt::BindingType::UniformBuffer, 0, 1)
+    layout::modelLayout = device.CreateBindGroupLayoutBuilder()
+        .SetBindingsType(nxt::ShaderStageBit::Vertex | nxt::ShaderStageBit::Compute, nxt::BindingType::UniformBuffer, 0, 1)
+        .GetResult();
+
+    layout::computeBufferLayout = device.CreateBindGroupLayoutBuilder()
+        .SetBindingsType(nxt::ShaderStageBit::Compute, nxt::BindingType::StorageBuffer, 0, 2)
         .GetResult();
 }
 

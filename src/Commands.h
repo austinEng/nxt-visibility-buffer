@@ -5,9 +5,11 @@
 
 struct RasterCommand {
     nxt::Buffer vertexBuffer;
-    uint32_t vertexBufferOffset;
     nxt::Buffer indexBuffer;
+    nxt::BufferView vertexBufferView;
+    nxt::BufferView indexBufferView;
+    uint32_t vertexBufferOffset;
     uint32_t indexBufferOffset;
     uint32_t count;
-    nxt::BindGroup uniforms;
+    nxt::BufferView uniformBufferView;
 };

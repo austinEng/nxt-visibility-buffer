@@ -9,7 +9,7 @@
 #include <tinygltfloader/tiny_gltf_loader.h>
 #include <utils/NXTHelpers.h>
 #include "Binding.h"
-#include "Uniforms.h"
+#include "Layouts.h"
 
 namespace {
     std::string getFilePathExtension(const std::string &filepath) {
@@ -18,18 +18,6 @@ namespace {
         }
         return "";
     }
-
-    /*const nxt::Buffer& getDefaultBuffer() {
-       static nxt::Buffer defaultBuffer;
-        if (!defaultBuffer) {
-            defaultBuffer = device.CreateBufferBuilder()
-                .SetAllowedUsage(nxt::BufferUsageBit::Vertex | nxt::BufferUsageBit::Index)
-                .SetSize(256)
-                .GetResult();
-            defaultBuffer.FreezeUsage(nxt::BufferUsageBit::Vertex | nxt::BufferUsageBit::Index);
-        }
-        return defaultBuffer;
-    }*/
 
     namespace gl {
         enum {
@@ -80,7 +68,7 @@ void ModelLoader::Start(const nxt::Device& device, const nxt::Queue& queue, std:
     }
 
     const tinygltf::Scene& scene = model->scene;
-
+    /*
     {
         for (const auto& bv : scene.bufferViews) {
             const auto& iBufferViewID = bv.first;
@@ -246,6 +234,36 @@ void ModelLoader::Start(const nxt::Device& device, const nxt::Queue& queue, std:
             model->textureViews[iTextureID] = oTexture.CreateTextureViewBuilder().GetResult();
         }
     }
+    */
+    for (const auto& it : scene.meshes) {
+        const auto& mesh = it.second;
+        for (const auto& prim : mesh.primitives) {
+
+            const auto& positionAttribute = prim.attributes.at("POSITION");
+
+            const auto& positionAccessor = scene.accessors.at(positionAttribute);
+            if (positionAccessor.byteStride != 12) {
+                fprintf(stderr, "Byte stride must be 12\n");
+            }
+
+            if (positionAccessor.componentType != gl::Float ||
+                (positionAccessor.type != TINYGLTF_TYPE_VEC4 && positionAccessor.type != TINYGLTF_TYPE_VEC3 && positionAccessor.type != TINYGLTF_TYPE_VEC2)) {
+                fprintf(stderr, "unsupported vertex accessor component type %d and type %d\n", positionAccessor.componentType, positionAccessor.type);
+                continue;
+            }
+
+            if (prim.indices.empty()) {
+                fprintf(stderr, "No indicies found\n");
+                continue;
+            }
+
+            const auto& indexAccesor = scene.accessors.at(prim.indices);
+            if (indexAccesor.componentType != gl::UnsignedShort || indexAccesor.type != TINYGLTF_TYPE_SCALAR) {
+                fprintf(stderr, "unsupported index accessor component type %d and type %d\n", indexAccesor.componentType, indexAccesor.type);
+                continue;
+            }
+        }
+    }
 
     model->UpdateCommands(device, queue);
 
@@ -325,13 +343,44 @@ void Model::UpdateCommands(const nxt::Device& device, const nxt::Queue& queue) {
                         continue;
                     }
 
-                    rasterCommands.emplace_back(RasterCommand {
-                        buffers.at(accessor.bufferView).Clone(),
-                        static_cast<uint32_t>(accessor.byteOffset),
-                        buffers.at(indices.bufferView).Clone(),
-                        static_cast<uint32_t>(indices.byteOffset),
-                        static_cast<uint32_t>(indices.count),
-                    });
+                    const auto& positionBufferView = scene.bufferViews.at(accessor.bufferView);
+                    const auto& indexBufferView = scene.bufferViews.at(indices.bufferView);
+
+                    const auto& positionBuffer = scene.buffers.at(positionBufferView.buffer);
+                    const auto& indexBuffer = scene.buffers.at(indexBufferView.buffer);
+
+                    const unsigned short* indexBuffer16bit = reinterpret_cast<const unsigned short*>(&indexBuffer.data.at(indexBufferView.byteOffset));
+
+                    std::vector<unsigned int> indices32Bit(indices.count);
+                    for (size_t i = 0; i < indices.count; ++i) {
+                        indices32Bit[i] = indexBuffer16bit[i];
+                    }
+
+                    uint32_t positionBufferSize = static_cast<uint32_t>(positionBufferView.byteLength ? positionBufferView.byteLength : positionBuffer.data.size() - positionBufferView.byteOffset);
+                    uint32_t indexBufferSize = static_cast<uint32_t>(sizeof(unsigned int) * indices.count);
+
+                    RasterCommand command;
+                    command.vertexBuffer = device.CreateBufferBuilder()
+                        .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Vertex | nxt::BufferUsageBit::Storage)
+                        .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
+                        .SetSize(positionBufferSize)
+                        .GetResult();
+                    command.indexBuffer = device.CreateBufferBuilder()
+                        .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Index | nxt::BufferUsageBit::Storage)
+                        .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
+                        .SetSize(indexBufferSize)
+                        .GetResult();
+                    command.vertexBufferView = command.vertexBuffer.CreateBufferViewBuilder().SetExtent(0, positionBufferSize).GetResult();
+                    command.indexBufferView = command.indexBuffer.CreateBufferViewBuilder().SetExtent(0, indexBufferSize).GetResult();
+                    command.vertexBufferOffset = 0;
+                    command.indexBufferOffset = 0;
+                    command.count = indices.count;
+
+                    command.vertexBuffer.SetSubData(0, static_cast<uint32_t>(positionBufferSize) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(&positionBuffer.data.at(positionBufferView.byteOffset)));
+                    command.indexBuffer.SetSubData(0, static_cast<uint32_t>(indexBufferSize) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(indices32Bit.data()));
+
+                    rasterCommands.push_back(std::move(command));
+
                     transforms.push_back(model);
                 }
             }
@@ -349,29 +398,20 @@ void Model::UpdateCommands(const nxt::Device& device, const nxt::Queue& queue) {
         uniformBuffer = device.CreateBufferBuilder()
             .SetAllowedUsage(nxt::BufferUsageBit::Uniform | nxt::BufferUsageBit::TransferDst)
             .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
-            .SetSize(sizeof(uniform::model_block) * static_cast<uint32_t>(rasterCommands.size()))
+            .SetSize(sizeof(layout::model_block) * static_cast<uint32_t>(rasterCommands.size()))
             .GetResult();
     } else {
         uniformBuffer.TransitionUsage(nxt::BufferUsageBit::TransferDst);
     }
 
-    uniformBuffer.SetSubData(0, sizeof(uniform::model_block) * static_cast<uint32_t>(rasterCommands.size()) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(transforms.data()));
+    uniformBuffer.SetSubData(0, sizeof(layout::model_block) * static_cast<uint32_t>(rasterCommands.size()) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(transforms.data()));
 
     for (unsigned int i = 0; i < rasterCommands.size(); ++i) {
-
-        auto uniformBufferView = uniformBuffer.CreateBufferViewBuilder()
-            .SetExtent(i * sizeof(uniform::model_block), sizeof(uniform::model_block))
-            .GetResult();
-
-        rasterCommands[i].uniforms = device.CreateBindGroupBuilder()
-            .SetLayout(uniform::modelLayout)
-            .SetBufferViews(0, 1, &uniformBufferView)
-            .SetUsage(nxt::BindGroupUsage::Frozen)
-            .GetResult();
+        rasterCommands[i].uniformBufferView = uniformBuffer.CreateBufferViewBuilder().SetExtent(i * sizeof(layout::model_block), sizeof(layout::model_block)).GetResult();
     }
 }
 
-const std::vector<RasterCommand>& Model::GetRasterCommands() const {
+const std::vector<RasterCommand>& Model::GetCommands() const {
     return rasterCommands;
 }
 

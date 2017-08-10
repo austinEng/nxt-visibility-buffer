@@ -26,10 +26,16 @@ class Renderer {
         bool shouldQuit = false;
 
         nxt::RenderPass renderpass;
+        nxt::Texture gBufferTexture;
         nxt::TextureView gBufferView;
         nxt::TextureView depthStencilView;
         nxt::Buffer cameraBuffer;
+        nxt::BufferView cameraBufferView;
         nxt::BindGroup cameraBindGroup;
         nxt::RenderPipeline rasterizePipeline;
-
+        nxt::ComputePipeline shadingPipeline;
+        nxt::BindGroupLayout computeBindGroupLayout;
+        nxt::Buffer computeOutputBuffer;
+        nxt::BufferView computeOutputBufferView;
+        nxt::BindGroup computeOutputBindGroup;
 };

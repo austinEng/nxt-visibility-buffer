@@ -5,7 +5,7 @@
 #include <common/Math.h>
 #include <common/Assert.h>
 #include "Scene.h"
-
+#include "Binding.h"
 extern uint64_t updateSerial;
 
 namespace gl {
@@ -32,7 +32,6 @@ namespace gl {
 }
 
 Scene::Scene(const nxt::Device& device, const nxt::Queue& queue) : device(device.Clone()), queue(queue.Clone()) {
-    device.Get();
 }
 
 void Scene::AddModel(std::string gltfPath) {

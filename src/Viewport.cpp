@@ -1,6 +1,7 @@
 
 #include "Viewport.h"
 #include "Binding.h"
+#include <GLFW/glfw3.h>
 
 extern uint64_t updateSerial;
 

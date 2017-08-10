@@ -11,7 +11,7 @@
 #include "Camera.h"
 #include "Renderer.h"
 #include "Scene.h"
-#include "Uniforms.h"
+#include "Layouts.h"
 #include "Viewport.h"
 
 uint64_t updateSerial = 1;
@@ -61,7 +61,7 @@ namespace {
     }
 }
 
-namespace uniform {
+namespace layout {
     nxt::BindGroupLayout cameraLayout;
     nxt::BindGroupLayout modelLayout;
 }
@@ -75,12 +75,12 @@ void frame(const nxt::SwapChain& swapchain) {
 }
 
 void init() {
-    uniform::cameraLayout = device.CreateBindGroupLayoutBuilder()
-        .SetBindingsType(nxt::ShaderStageBit::Vertex, nxt::BindingType::UniformBuffer, 0, 1)
+    layout::cameraLayout = device.CreateBindGroupLayoutBuilder()
+        .SetBindingsType(nxt::ShaderStageBit::Vertex | nxt::ShaderStageBit::Compute, nxt::BindingType::UniformBuffer, 0, 1)
         .GetResult();
 
-    uniform::modelLayout = device.CreateBindGroupLayoutBuilder()
-        .SetBindingsType(nxt::ShaderStageBit::Vertex, nxt::BindingType::UniformBuffer, 0, 1)
+    layout::modelLayout = device.CreateBindGroupLayoutBuilder()
+        .SetBindingsType(nxt::ShaderStageBit::Vertex | nxt::ShaderStageBit::Compute, nxt::BindingType::UniformBuffer, 0, 1)
         .GetResult();
 }
 
@@ -105,14 +105,19 @@ int main(int argc, const char* argv[]) {
 
     Renderer* renderer = new Renderer(device, queue, camera, scene);
 
-    Viewport viewport(device, queue, renderer);
+    Viewport* viewport = new Viewport(device, queue, renderer);
+
+    for (int i = 1; i < argc; ++i) {
+        scenePtr->AddModel(std::string(argv[i]));
+    }
 
     while (!ShouldQuit()) {
         glfwPollEvents();
         utils::USleep(16000);
     }
 
-    viewport.Quit();
+    viewport->Quit();
     renderer->Quit();
+    delete viewport;
     delete renderer;
 }

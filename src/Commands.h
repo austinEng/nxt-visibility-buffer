@@ -3,13 +3,17 @@
 
 #include <glm/glm/mat4x4.hpp>
 
-struct RasterCommand {
-    nxt::Buffer vertexBuffer;
+struct DrawInfo {
     nxt::Buffer indexBuffer;
-    nxt::BufferView vertexBufferView;
     nxt::BufferView indexBufferView;
-    uint32_t vertexBufferOffset;
-    uint32_t indexBufferOffset;
+    nxt::Buffer vertexBuffer;
+    nxt::BufferView vertexBufferView;
     uint32_t count;
     nxt::BufferView uniformBufferView;
+    nxt::Sampler diffuseSampler;
+    nxt::Sampler normalSampler;
+    nxt::Sampler specularSampler;
+    nxt::TextureView diffuseTexture;
+    nxt::TextureView normalTexture;
+    nxt::TextureView specularTexture;
 };

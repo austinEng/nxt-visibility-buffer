@@ -40,7 +40,7 @@ glm::mat4 Camera::GetViewProj() const {
 }
 
 glm::vec3 Camera::GetPosition() const {
-    return _center;
+    return _center + _eyeDir * _radius;
 }
 
 void Camera::Recalculate() const {

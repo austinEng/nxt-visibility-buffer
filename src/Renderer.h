@@ -34,6 +34,7 @@ class Renderer {
         nxt::BindGroup cameraBindGroup;
         nxt::RenderPipeline rasterizePipeline;
         nxt::ComputePipeline shadingPipeline;
+        nxt::BindGroupLayout modelBindGroupLayout;
         nxt::BindGroupLayout computeBindGroupLayout;
         nxt::Buffer computeOutputBuffer;
         nxt::BufferView computeOutputBufferView;

@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include <array>
 #include <functional>
 #include <glm/glm/mat4x4.hpp>
 #include <map>
@@ -8,6 +9,7 @@
 #include <tinygltfloader/tiny_gltf_loader.h>
 #include <thread>
 #include "Commands.h"
+#include "Globals.h"
 
 class Model;
 class ModelLoader {
@@ -41,17 +43,17 @@ class Model {
 public:
 
     struct Vertex {
-        glm::vec3 position;
-        unsigned int normal;
-        unsigned int tangent;
-        unsigned int texCoord;
-        unsigned int materialID;
-        unsigned int pad;
+        glm::vec3 position = glm::vec3(0,0,0);
+        uint32_t normal = 0;
+        uint32_t tangent = 0;
+        uint32_t texCoord = 0;
+        uint32_t materialID = 0;
+        uint32_t pad;
     };
 
     void UpdateCommands(const nxt::Device& device, const nxt::Queue& queue);
 
-    const std::vector<RasterCommand>& GetCommands() const;
+    const std::vector<DrawInfo>& GetCommands() const;
     const nxt::Buffer& GetUniformBuffer() const;
 
 private:
@@ -61,7 +63,7 @@ private:
     std::map<std::string, nxt::Sampler> samplers;
     std::map<std::string, nxt::TextureView> textureViews;
 
-    std::vector<RasterCommand> rasterCommands;
-    std::vector<glm::mat4> transforms;
+    std::vector<DrawInfo> rasterCommands;
+    std::vector<layout::model_block> uniforms;
     nxt::Buffer uniformBuffer;
 };

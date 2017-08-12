@@ -61,10 +61,15 @@ Renderer::Renderer(const Camera& camera, const Scene& scene)
         .SetUsage(nxt::BindGroupUsage::Frozen)
         .GetResult();
 
+    constantsBindGroupLayout = device.CreateBindGroupLayoutBuilder()
+        .SetBindingsType(nxt::ShaderStageBit::Fragment | nxt::ShaderStageBit::Compute, nxt::BindingType::UniformBuffer, 0, 1)
+        .GetResult();
+
     {
         auto pipelineLayout = device.CreatePipelineLayoutBuilder()
             .SetBindGroupLayout(0, layout::cameraLayout)
             .SetBindGroupLayout(1, layout::modelLayout)
+            .SetBindGroupLayout(2, constantsBindGroupLayout)
             .GetResult();
 
         auto depthStencilState = device.CreateDepthStencilStateBuilder()
@@ -101,9 +106,13 @@ Renderer::Renderer(const Camera& camera, const Scene& scene)
 
             layout(location = 0) out uvec4 visibilityBuffer;
 
+            layout(set = 2, binding = 0) uniform constant_block {
+                uint drawID;
+            } u_constants;
+
             void main() {
-                uint id3 = 0x80 | (0 & 0x7F);
-                uint id2 = (gl_PrimitiveID >> 16) & 0xFF;
+                uint id3 = u_constants.drawID & 0xFF;
+                uint id2 = 0x80 | ((gl_PrimitiveID >> 16) & 0x7F);
                 uint id1 = (gl_PrimitiveID >> 8) & 0xFF;
                 uint id0 = gl_PrimitiveID & 0xFF;
                 visibilityBuffer = uvec4(id0, id1, id2, id3);
@@ -161,6 +170,10 @@ Renderer::Renderer(const Camera& camera, const Scene& scene)
                 uint pad;
             } vertices[];
 
+            layout(set = 3, binding = 0) uniform constant_block {
+                uint drawID;
+            } u_constants;
+
             uint packColor(uvec4 color) {
                 return (color.r & 0XFF) + ((color.g & 0XFF) << 8) + ((color.b & 0XFF) << 16) + ((color.a & 0XFF) << 24);
             }
@@ -192,7 +205,7 @@ Renderer::Renderer(const Camera& camera, const Scene& scene)
                 uint outIndex = gl_GlobalInvocationID.x + 640 * gl_GlobalInvocationID.y;
                 uvec4 gBufferVal = texelFetch( usampler2D(gBuffer, gBufferSampler), ivec2(gl_GlobalInvocationID.xy), 0 );
 
-                if ((gBufferVal.a & 0x80) == 0) {
+                if ((gBufferVal.b & 0x80) == 0) {
                     if (mod(gl_GlobalInvocationID.x / 20 + gl_GlobalInvocationID.y / 20, 2) == 0) {
                         fragColor[outIndex].color = packColor(uvec4(80, 80, 80, 255));
                     } else {
@@ -200,7 +213,13 @@ Renderer::Renderer(const Camera& camera, const Scene& scene)
                     }
                     return;
                 }
+                gBufferVal.b &= 0x7F;
 
+                uint drawID = gBufferVal.a;
+                if (drawID != u_constants.drawID) {
+                    return;
+                }
+                
                 uint primID = packColor(uvec4(gBufferVal.rgb, 0));
                 fragColor[outIndex].color = primID;
 
@@ -317,6 +336,7 @@ Renderer::Renderer(const Camera& camera, const Scene& scene)
             .SetBindGroupLayout(0, layout::cameraLayout)
             .SetBindGroupLayout(1, modelBindGroupLayout)
             .SetBindGroupLayout(2, computeBindGroupLayout)
+            .SetBindGroupLayout(3, constantsBindGroupLayout)
             .GetResult();
 
         computeOutputBuffer = device.CreateBufferBuilder()
@@ -354,7 +374,62 @@ void Renderer::Render(nxt::Texture &texture) {
         .SetAttachment(1, depthStencilView)
         .GetResult();
 
-    layout::camera_block cameraBlock {
+    uint32_t drawCount = 0;
+
+    for (Model* model : scene.GetModels()) {
+        for (const DrawInfo& draw : model->GetCommands()) {
+            drawCount++;
+        }
+    }
+
+    if (drawCount == 0) {
+        return;
+    }
+
+    std::vector<nxt::BindGroup> constants;
+    constants.reserve(drawCount);
+    
+    uint32_t drawID = 0;
+
+    {
+        struct alignas(256) DrawConstants {
+            uint32_t drawID;
+        };
+
+        auto buffer = LOCK_AND_RELEASE(globalDevice, CreateBufferBuilder())
+            .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Uniform)
+            .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
+            .SetSize(drawCount * sizeof(DrawConstants))
+            .GetResult();
+        std::vector<DrawConstants> staging;
+        staging.reserve(drawCount);
+
+        for (Model* model : scene.GetModels()) {
+            for (const DrawInfo& draw : model->GetCommands()) {
+                staging.push_back(DrawConstants{
+                    drawID
+                });
+
+                auto bufferView = buffer.CreateBufferViewBuilder()
+                    .SetExtent(sizeof(DrawConstants) * drawID, sizeof(DrawConstants))
+                    .GetResult();
+
+                constants.push_back(LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
+                    .SetUsage(nxt::BindGroupUsage::Frozen)
+                    .SetLayout(constantsBindGroupLayout)
+                    .SetBufferViews(0, 1, &bufferView)
+                    .GetResult()
+                );
+
+                drawID++;
+            }
+        }
+
+        buffer.SetSubData(0, drawCount * sizeof(DrawConstants) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(staging.data()));
+        buffer.FreezeUsage(nxt::BufferUsageBit::Uniform);
+    }
+
+    layout::camera_block cameraBlock{
         camera.GetViewProj(),
         camera.GetPosition()
     };
@@ -376,71 +451,81 @@ void Renderer::Render(nxt::Texture &texture) {
     commands.TransitionBufferUsage(computeOutputBuffer, nxt::BufferUsageBit::Storage);
     commands.TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst);
 
-    uint32_t drawID = 0;
+    drawID = 0;
+
+    commands.BeginRenderPass(renderpass, framebuffer);
+    commands.BeginRenderSubpass();
+    commands.SetRenderPipeline(rasterizePipeline);
+    commands.SetBindGroup(0, cameraBindGroup);
     for (Model* model : scene.GetModels()) {
         for (const DrawInfo& draw : model->GetCommands()) {
+            auto modelBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
+                .SetUsage(nxt::BindGroupUsage::Frozen)
+                .SetLayout(layout::modelLayout)
+                .SetBufferViews(0, 1, &draw.uniformBufferView)
+                .GetResult();
 
-            {
-                auto modelBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
-                    .SetUsage(nxt::BindGroupUsage::Frozen)
-                    .SetLayout(layout::modelLayout)
-                    .SetBufferViews(0, 1, &draw.uniformBufferView)
-                    .GetResult();
-
-                commands.BeginRenderPass(renderpass, framebuffer);
-                commands.BeginRenderSubpass();
-
-                commands.SetRenderPipeline(rasterizePipeline);
-                commands.SetBindGroup(0, cameraBindGroup);
-                commands.SetBindGroup(1, modelBindGroup);
-                uint32_t zero = 0;
-                commands.SetVertexBuffers(0, 1, &draw.vertexBuffer, &zero);
-                commands.SetIndexBuffer(draw.indexBuffer, 0, nxt::IndexFormat::Uint32);
-                commands.DrawElements(draw.count, 1, 0, 0);
-
-                commands.EndRenderSubpass();
-                commands.EndRenderPass();
-            }
-
-            commands.TransitionBufferUsage(draw.indexBuffer, nxt::BufferUsageBit::Storage);
-            commands.TransitionBufferUsage(draw.vertexBuffer, nxt::BufferUsageBit::Storage);
-            commands.TransitionTextureUsage(gBufferTexture, nxt::TextureUsageBit::Sampled);
-
-            {
-                nxt::BufferView computeBufferViews[] = {
-                    computeOutputBufferView.Clone(),
-                    draw.indexBufferView.Clone(),
-                    draw.vertexBufferView.Clone(),
-                };
-
-                auto modelBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
-                    .SetUsage(nxt::BindGroupUsage::Frozen)
-                    .SetLayout(modelBindGroupLayout)
-                    .SetBufferViews(0, 1, &draw.uniformBufferView)
-                    .SetSamplers(1, 3, &draw.diffuseSampler)
-                    .SetTextureViews(4, 3, &draw.diffuseTexture)
-                    .GetResult();
-
-                auto computeBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
-                    .SetUsage(nxt::BindGroupUsage::Frozen)
-                    .SetLayout(computeBindGroupLayout)
-                    .SetSamplers(0, 1, &default::defaultSampler)
-                    .SetTextureViews(1, 1, &gBufferView)
-                    .SetBufferViews(2, 3, computeBufferViews)
-                    .GetResult();
-
-                commands.BeginComputePass();
-                commands.SetComputePipeline(shadingPipeline);
-                commands.SetBindGroup(0, cameraBindGroup);
-                commands.SetBindGroup(1, modelBindGroup);
-                commands.SetBindGroup(2, computeBindGroup);
-                commands.Dispatch(640, 480, 1);
-                commands.EndComputePass();
-            }
+            commands.SetBindGroup(1, modelBindGroup);
+            commands.SetBindGroup(2, constants[drawID]);
+            uint32_t zero = 0;
+            commands.SetVertexBuffers(0, 1, &draw.vertexBuffer, &zero);
+            commands.SetIndexBuffer(draw.indexBuffer, 0, nxt::IndexFormat::Uint32);
+            commands.DrawElements(draw.count, 1, 0, 0);
 
             drawID++;
         }
     }
+    commands.EndRenderSubpass();
+    commands.EndRenderPass();
+
+    for (Model* model : scene.GetModels()) {
+        for (const DrawInfo& draw : model->GetCommands()) {
+            commands.TransitionBufferUsage(draw.indexBuffer, nxt::BufferUsageBit::Storage);
+            commands.TransitionBufferUsage(draw.vertexBuffer, nxt::BufferUsageBit::Storage);
+            commands.TransitionTextureUsage(gBufferTexture, nxt::TextureUsageBit::Sampled);
+        }
+    }
+
+    drawID = 0;
+
+    commands.BeginComputePass();
+    commands.SetComputePipeline(shadingPipeline);
+    commands.SetBindGroup(0, cameraBindGroup);
+
+    for (Model* model : scene.GetModels()) {
+        for (const DrawInfo& draw : model->GetCommands()) {
+            nxt::BufferView computeBufferViews[] = {
+                computeOutputBufferView.Clone(),
+                draw.indexBufferView.Clone(),
+                draw.vertexBufferView.Clone(),
+            };
+
+            auto modelBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
+                .SetUsage(nxt::BindGroupUsage::Frozen)
+                .SetLayout(modelBindGroupLayout)
+                .SetBufferViews(0, 1, &draw.uniformBufferView)
+                .SetSamplers(1, 3, &draw.diffuseSampler)
+                .SetTextureViews(4, 3, &draw.diffuseTexture)
+                .GetResult();
+
+            auto computeBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
+                .SetUsage(nxt::BindGroupUsage::Frozen)
+                .SetLayout(computeBindGroupLayout)
+                .SetSamplers(0, 1, &default::defaultSampler)
+                .SetTextureViews(1, 1, &gBufferView)
+                .SetBufferViews(2, 3, computeBufferViews)
+                .GetResult();
+
+            commands.SetBindGroup(1, modelBindGroup);
+            commands.SetBindGroup(2, computeBindGroup);
+            commands.SetBindGroup(3, constants[drawID]);
+            commands.Dispatch(640, 480, 1);
+
+            drawID++;
+        }
+    }
+
+    commands.EndComputePass();
 
     commands.TransitionBufferUsage(computeOutputBuffer, nxt::BufferUsageBit::TransferSrc);
     commands.CopyBufferToTexture(computeOutputBuffer, 0, 0, texture, 0, 0, 0, 640, 480, 1, 0);

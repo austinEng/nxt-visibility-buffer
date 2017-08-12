@@ -200,6 +200,44 @@ Renderer::Renderer(const Camera& camera, const Scene& scene)
                 vec3 surfbinor = cross(geomnor, surftan);
                 return normap.y * surftan + normap.x * surfbinor + normap.z * geomnor;
             }
+            
+            // Returns (b0, b1, b2, perspCorrect)
+            vec4 calculateBarycentrics(vec4 p0_ndc, vec4 p1_ndc, vec4 p2_ndc, vec2 ndc) {
+                p0_ndc.xy /= p0_ndc.w;
+                p1_ndc.xy /= p1_ndc.w;
+                p2_ndc.xy /= p2_ndc.w;
+
+                vec2 v0 = p1_ndc.xy - p0_ndc.xy;
+                vec2 v1 = p2_ndc.xy - p0_ndc.xy;
+                vec2 v2 = ndc - p0_ndc.xy;
+                float denom = 1.f / (v0.x * v1.y - v1.x * v0.y);
+                float b1 = (v2.x * v1.y - v1.x * v2.y) * denom;
+                float b2 = (v0.x * v2.y - v2.x * v0.y) * denom;
+                float b0 = 1.0f - b1 - b2;
+
+                float oneOverW = 1.f / (b0 / p0_ndc.w + b1 / p1_ndc.w + b2 / p2_ndc.w);
+                b0 /= p0_ndc.w;
+                b1 /= p1_ndc.w;
+                b2 /= p2_ndc.w;
+
+                return vec4(b0, b1, b2, oneOverW);
+            }
+
+            float barycentricInterpolate(float v0, float v1, float v2, vec4 barys) {
+                return (v0 * barys[0] + v1 * barys[1] + v2 * barys[2]) * barys[3];
+            }
+
+            vec2 barycentricInterpolate(vec2 v0, vec2 v1, vec2 v2, vec4 barys) {
+                return (v0 * barys[0] + v1 * barys[1] + v2 * barys[2]) * barys[3];
+            }
+
+            vec3 barycentricInterpolate(vec3 v0, vec3 v1, vec3 v2, vec4 barys) {
+                return (v0 * barys[0] + v1 * barys[1] + v2 * barys[2]) * barys[3];
+            }
+
+            vec4 barycentricInterpolate(vec4 v0, vec4 v1, vec4 v2, vec4 barys) {
+                return (v0 * barys[0] + v1 * barys[1] + v2 * barys[2]) * barys[3];
+            }
 
             void main() {
                 uint outIndex = gl_GlobalInvocationID.x + 640 * gl_GlobalInvocationID.y;
@@ -235,47 +273,20 @@ Renderer::Renderer(const Camera& camera, const Scene& scene)
                 vec4 p1_world = u_model.model * p1_object;
                 vec4 p2_world = u_model.model * p2_object;
 
-                vec2 ndc = vec2(2.0, -2.0) * ((gl_GlobalInvocationID.xy / vec2(640.0, 480.0)) - vec2(0.5, 0.5));
-                vec4 p0_screen = u_camera.viewProj * p0_world;
-                vec4 p1_screen = u_camera.viewProj * p1_world;
-                vec4 p2_screen = u_camera.viewProj * p2_world;
+                vec4 barys = calculateBarycentrics(
+                    u_camera.viewProj * p0_world, 
+                    u_camera.viewProj * p1_world,
+                    u_camera.viewProj * p2_world,
+                    vec2(2.0, -2.0) * ((gl_GlobalInvocationID.xy / vec2(640.0, 480.0)) - vec2(0.5, 0.5))
+                );
 
-                vec2 p0_ndc = p0_screen.xy / p0_screen.w;
-                vec2 p1_ndc = p1_screen.xy / p1_screen.w;
-                vec2 p2_ndc = p2_screen.xy / p2_screen.w;
-
-                vec2 v0 = p1_ndc - p0_ndc;
-                vec2 v1 = p2_ndc - p0_ndc;
-                vec2 v2 = ndc - p0_ndc;
-                float d00 = dot(v0, v0);
-                float d01 = dot(v0, v1);
-                float d11 = dot(v1, v1);
-                float d20 = dot(v2, v0);
-                float d21 = dot(v2, v1);
-                float denom = d00 * d11 - d01 * d01;
-                float b1 = (d11 * d20 - d01 * d21) / denom;
-                float b2 = (d00 * d21 - d01 * d20) / denom;
-                float b0 = 1.0f - b1 - b2;
-
-                float w = b0 / p0_screen.w + b1 / p1_screen.w + b2 / p2_screen.w;
-                b0 /= p0_screen.w;
-                b1 /= p1_screen.w;
-                b2 /= p2_screen.w;
-
-                vec4 p_world = (b0 * p0_world + b1 * p1_world + b2 * p2_world) / w;
-
-                // vec3 eyeObj = vec3(u_model.modelInv * vec4(u_camera.eye, 1));
+                vec4 p_world = barycentricInterpolate(p0_world, p1_world, p2_world, barys);
 
                 vec3 faceNormal = normalize(cross(vec3(p1_world - p0_world), vec3(p2_world - p0_world)));
                 float zDir = faceNormal.z / abs(faceNormal.z);
 
-                vec3 N = normalize((
-                    b0 * unpackNormal(vertices[i0].normal, zDir) +
-                    b1 * unpackNormal(vertices[i1].normal, zDir) +
-                    b2 * unpackNormal(vertices[i2].normal, zDir)
-                ) / w);
-
-                vec2 texCoord = ( b0 * unpackTexcoord(vertices[i0].texCoord) + b1 * unpackTexcoord(vertices[i1].texCoord) + b2 * unpackTexcoord(vertices[i2].texCoord) ) / w;
+                vec3 N = normalize(barycentricInterpolate(unpackNormal(vertices[i0].normal, zDir), unpackNormal(vertices[i1].normal, zDir), unpackNormal(vertices[i2].normal, zDir), barys));
+                vec2 texCoord = barycentricInterpolate(unpackTexcoord(vertices[i0].texCoord), unpackTexcoord(vertices[i1].texCoord), unpackTexcoord(vertices[i2].texCoord), barys);
                 
                 vec3 diffuseColor = texture(sampler2D(diffuseTexture, diffuseSampler), texCoord).rgb;
                 vec3 normalMap = texture(sampler2D(normalTexture, normalSampler), texCoord).rgb;
@@ -306,6 +317,7 @@ Renderer::Renderer(const Camera& camera, const Scene& scene)
                 composite = clamp(composite, vec3(0.0), vec3(1.0));
                 
                 fragColor[outIndex].color = packColor(uvec4(255 * vec4(composite, 1)));
+                // fragColor[outIndex].color = packColor(uvec4(255 * vec4(vec3(barys) * barys[3], 1)));
                 // fragColor[outIndex].color = packColor(uvec4(255 * vec4(abs(V), 1)));
                 // fragColor[outIndex].color = packColor(uvec4(255 * vec4(normalMap, 1)));
                 // fragColor[outIndex].color = packColor(uvec4(255 * vec4(vec3(b0, b1, b2), 1)));

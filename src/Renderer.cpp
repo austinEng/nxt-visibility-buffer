@@ -178,6 +178,14 @@ Renderer::Renderer(const nxt::Device &device, const nxt::Queue &queue, const Cam
                 return uv;
             }
 
+            vec3 applyNormalMap(vec3 geomnor, vec3 normap) {
+                normap = normap * 2.0 - 1.0;
+                vec3 up = normalize(vec3(0.001, 1, 0.001));
+                vec3 surftan = normalize(cross(geomnor, up));
+                vec3 surfbinor = cross(geomnor, surftan);
+                return normap.y * surftan + normap.x * surfbinor + normap.z * geomnor;
+            }
+
             void main() {
                 uint outIndex = gl_GlobalInvocationID.x + 640 * gl_GlobalInvocationID.y;
                 uvec4 gBufferVal = texelFetch( usampler2D(gBuffer, gBufferSampler), ivec2(gl_GlobalInvocationID.xy), 0 );
@@ -252,19 +260,33 @@ Renderer::Renderer(const nxt::Device &device, const nxt::Queue &queue, const Cam
                 vec3 normalMap = texture(sampler2D(normalTexture, normalSampler), texCoord).rgb;
                 vec3 specularColor = texture(sampler2D(specularTexture, specularSampler), texCoord).rgb;
 
+                N = applyNormalMap(N, normalMap);
+
+                vec3 V = normalize(u_camera.eye - p_world.xyz);
+
                 // position, intensity
                 const vec4 lights[2] = vec4[2](
                     vec4(10.0, 30.0, -20.0, 1.0),
-                    vec4(-20.0, 20.0, 20.0, 0.2)
+                    vec4(20.0, 20.0, 20.0, 0.5)
                 );
 
                 float diffuseTerm = 0;
+                float specularTerm = 0;
                 for (uint i = 0; i < 2; ++i) {
-                    diffuseTerm += lights[i].w * max(dot(normalize(lights[i].xyz - p_world.xyz), N), 0);
+                    vec3 L = normalize(lights[i].xyz - p_world.xyz);
+                    vec3 H = (L + V) / 2.0;
+
+                    specularTerm += lights[i].w * pow(max(dot(H, N), 0.0), 20.0);
+                    diffuseTerm += lights[i].w * max(dot(L, N), 0.0);
                 }
-                float lightingTerm = 0.15 + 0.85 * diffuseTerm;
+                diffuseTerm = 0.15 + 0.85 * diffuseTerm;
+                vec3 composite = diffuseTerm * diffuseColor + specularTerm * specularColor;
+
+                composite = clamp(composite, vec3(0.0), vec3(1.0));
                 
-                fragColor[outIndex].color = packColor(uvec4(255 * vec4(lightingTerm * diffuseColor, 1)));
+                fragColor[outIndex].color = packColor(uvec4(255 * vec4(composite, 1)));
+                // fragColor[outIndex].color = packColor(uvec4(255 * vec4(abs(V), 1)));
+                // fragColor[outIndex].color = packColor(uvec4(255 * vec4(normalMap, 1)));
                 // fragColor[outIndex].color = packColor(uvec4(255 * vec4(vec3(b0, b1, b2), 1)));
                 // fragColor[outIndex].color = packColor(uvec4(255 * vec4((ndc + 1.0) * 0.5, 0, 1)));
                 // fragColor[outIndex].color = packColor(uvec4(255 * vec4(vec3(p_world), 1)));

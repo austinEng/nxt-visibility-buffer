@@ -236,36 +236,6 @@ void ModelLoader::Start(std::string gltfPath, Model* model, const std::function<
             model->textureViews[iTextureID] = oTexture.CreateTextureViewBuilder().GetResult();
         }
     }
-    
-    for (const auto& it : scene.meshes) {
-        const auto& mesh = it.second;
-        for (const auto& prim : mesh.primitives) {
-
-            const auto& positionAttribute = prim.attributes.at("POSITION");
-
-            const auto& positionAccessor = scene.accessors.at(positionAttribute);
-            if (positionAccessor.byteStride != 12) {
-                fprintf(stderr, "Byte stride must be 12\n");
-            }
-
-            if (positionAccessor.componentType != gl::Float ||
-                (positionAccessor.type != TINYGLTF_TYPE_VEC4 && positionAccessor.type != TINYGLTF_TYPE_VEC3 && positionAccessor.type != TINYGLTF_TYPE_VEC2)) {
-                fprintf(stderr, "unsupported vertex accessor component type %d and type %d\n", positionAccessor.componentType, positionAccessor.type);
-                continue;
-            }
-
-            if (prim.indices.empty()) {
-                fprintf(stderr, "No indicies found\n");
-                continue;
-            }
-
-            const auto& indexAccesor = scene.accessors.at(prim.indices);
-            if (indexAccesor.componentType != gl::UnsignedShort || indexAccesor.type != TINYGLTF_TYPE_SCALAR) {
-                fprintf(stderr, "unsupported index accessor component type %d and type %d\n", indexAccesor.componentType, indexAccesor.type);
-                continue;
-            }
-        }
-    }
 
     model->UpdateCommands();
 
@@ -369,7 +339,23 @@ void Model::UpdateCommands() {
                         fprintf(stderr, "Missing %s attribute\n", attribute);
                         return;
                     }
-                    const auto& accessor = scene.accessors.at(it0->second);
+                    auto& accessor = scene.accessors.at(it0->second);
+                    if (accessor.byteStride == 0) {
+                        switch (accessor.type) {
+                            case TINYGLTF_TYPE_VEC4:
+                                accessor.byteStride = 16;
+                                break;
+                            case TINYGLTF_TYPE_VEC3:
+                                accessor.byteStride = 12;
+                                break;
+                            case TINYGLTF_TYPE_VEC2:
+                                accessor.byteStride = 8;
+                                break;
+                            default:
+                                fprintf(stderr, "Unsupported byte stride for attribute %s of type &d\n", attribute, accessor.type);
+                                return;
+                        }
+                    }
 
                     auto it1 = scene.bufferViews.find(accessor.bufferView);
                     if (it1 == scene.bufferViews.end()) {

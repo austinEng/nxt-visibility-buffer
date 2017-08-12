@@ -38,4 +38,6 @@ class Renderer {
         nxt::Buffer computeOutputBuffer;
         nxt::BufferView computeOutputBufferView;
         nxt::BindGroup computeOutputBindGroup;
+
+        std::vector<nxt::BindGroup> constantBindGroups;
 };

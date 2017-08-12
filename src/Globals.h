@@ -11,13 +11,13 @@ extern LockedObject<nxt::Queue> globalQueue;
 
 namespace layout {
 
-    struct camera_block {
+    struct alignas(256) camera_block {
         glm::mat4 viewProj;
         glm::vec3 eye;
         float pad;
     };
 
-    struct model_block {
+    struct alignas(256) model_block {
         glm::mat4 model;
         glm::mat4 modelInv;
     };

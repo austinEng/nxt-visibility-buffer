@@ -386,12 +386,12 @@ void Renderer::Render(nxt::Texture &texture) {
         return;
     }
 
-    std::vector<nxt::BindGroup> constants;
-    constants.reserve(drawCount);
-    
-    uint32_t drawID = 0;
+    if (drawCount != constantBindGroups.size()) {
+        constantBindGroups.clear();
+        constantBindGroups.reserve(drawCount);
 
-    {
+        uint32_t drawID = 0;
+
         struct alignas(256) DrawConstants {
             uint32_t drawID;
         };
@@ -414,7 +414,7 @@ void Renderer::Render(nxt::Texture &texture) {
                     .SetExtent(sizeof(DrawConstants) * drawID, sizeof(DrawConstants))
                     .GetResult();
 
-                constants.push_back(LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
+                constantBindGroups.push_back(LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
                     .SetUsage(nxt::BindGroupUsage::Frozen)
                     .SetLayout(constantsBindGroupLayout)
                     .SetBufferViews(0, 1, &bufferView)
@@ -451,7 +451,7 @@ void Renderer::Render(nxt::Texture &texture) {
     commands.TransitionBufferUsage(computeOutputBuffer, nxt::BufferUsageBit::Storage);
     commands.TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst);
 
-    drawID = 0;
+    uint32_t drawID = 0;
 
     commands.BeginRenderPass(renderpass, framebuffer);
     commands.BeginRenderSubpass();
@@ -466,7 +466,7 @@ void Renderer::Render(nxt::Texture &texture) {
                 .GetResult();
 
             commands.SetBindGroup(1, modelBindGroup);
-            commands.SetBindGroup(2, constants[drawID]);
+            commands.SetBindGroup(2, constantBindGroups[drawID]);
             uint32_t zero = 0;
             commands.SetVertexBuffers(0, 1, &draw.vertexBuffer, &zero);
             commands.SetIndexBuffer(draw.indexBuffer, 0, nxt::IndexFormat::Uint32);
@@ -518,7 +518,7 @@ void Renderer::Render(nxt::Texture &texture) {
 
             commands.SetBindGroup(1, modelBindGroup);
             commands.SetBindGroup(2, computeBindGroup);
-            commands.SetBindGroup(3, constants[drawID]);
+            commands.SetBindGroup(3, constantBindGroups[drawID]);
             commands.Dispatch(640, 480, 1);
 
             drawID++;

@@ -10,14 +10,15 @@
 #include <utils/NXTHelpers.h>
 #include "Binding.h"
 #include "Camera.h"
+#include "LockedObject.h"
 #include "Renderer.h"
 #include "Scene.h"
 #include "Globals.h"
 #include "Viewport.h"
 
 uint64_t updateSerial = 1;
-nxt::Device device;
-nxt::Queue queue;
+LockedObject<nxt::Device> globalDevice;
+LockedObject<nxt::Queue> globalQueue;
 
 namespace {
     Camera camera;
@@ -83,6 +84,8 @@ void frame(const nxt::SwapChain& swapchain) {
 }
 
 void init() {
+    auto& device = globalDevice.Lock();
+
     layout::cameraLayout = device.CreateBindGroupLayoutBuilder()
         .SetBindingsType(nxt::ShaderStageBit::Vertex | nxt::ShaderStageBit::Compute, nxt::BindingType::UniformBuffer, 0, 1)
         .GetResult();
@@ -106,7 +109,7 @@ void init() {
             .TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst)
             .CopyBufferToTexture(staging, 0, 256, texture, 0, 0, 0, 1, 1, 1, 0)
             .GetResult();
-        queue.Submit(1, &cmdbuf);
+        LOCK_AND_RELEASE_VOID(globalQueue, Submit(1, &cmdbuf));
         texture.FreezeUsage(nxt::TextureUsageBit::Sampled);
 
         default::defaultDiffuse = texture.CreateTextureViewBuilder().GetResult();
@@ -127,7 +130,7 @@ void init() {
             .TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst)
             .CopyBufferToTexture(staging, 0, 256, texture, 0, 0, 0, 1, 1, 1, 0)
             .GetResult();
-        queue.Submit(1, &cmdbuf);
+        LOCK_AND_RELEASE_VOID(globalQueue, Submit(1, &cmdbuf));
         texture.FreezeUsage(nxt::TextureUsageBit::Sampled);
 
         default::defaultNormal = texture.CreateTextureViewBuilder().GetResult();
@@ -148,13 +151,15 @@ void init() {
             .TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst)
             .CopyBufferToTexture(staging, 0, 256, texture, 0, 0, 0, 1, 1, 1, 0)
             .GetResult();
-        queue.Submit(1, &cmdbuf);
+        LOCK_AND_RELEASE_VOID(globalQueue, Submit(1, &cmdbuf));
         texture.FreezeUsage(nxt::TextureUsageBit::Sampled);
 
         default::defaultSpecular = texture.CreateTextureViewBuilder().GetResult();
     }
 
     default::defaultSampler = device.CreateSamplerBuilder().SetFilterMode(nxt::FilterMode::Linear, nxt::FilterMode::Linear, nxt::FilterMode::Linear).GetResult();
+
+    globalDevice.Unlock();
 }
 
 int main(int argc, const char* argv[]) {
@@ -162,12 +167,12 @@ int main(int argc, const char* argv[]) {
         return 1;
     }
 
-    device = CreateCppNXTDevice();
-    queue = device.CreateQueueBuilder().GetResult();
+    globalDevice = CreateCppNXTDevice();
+    globalQueue = globalDevice.Get().CreateQueueBuilder().GetResult();
 
     init();
 
-    Scene scene(device, queue);
+    Scene scene;
     scenePtr = &scene;
 
     GLFWwindow* window = GetGLFWWindow();
@@ -176,9 +181,9 @@ int main(int argc, const char* argv[]) {
     glfwSetScrollCallback(window, scrollCallback);
     glfwSetDropCallback(window, dropCallback);
 
-    Renderer* renderer = new Renderer(device, queue, camera, scene);
+    Renderer* renderer = new Renderer(camera, scene);
 
-    Viewport* viewport = new Viewport(device, queue, renderer);
+    Viewport* viewport = new Viewport(renderer);
 
     for (int i = 1; i < argc; ++i) {
         scenePtr->AddModel(std::string(argv[i]));

@@ -11,8 +11,10 @@ namespace {
     }
 }
 
-Renderer::Renderer(const nxt::Device &device, const nxt::Queue &queue, const Camera& camera, const Scene& scene)
-    : device(device.Clone()), queue(queue.Clone()), scene(scene), camera(camera), _thread(Loop, this) {
+Renderer::Renderer(const Camera& camera, const Scene& scene)
+    : scene(scene), camera(camera), _thread(Loop, this) {
+
+    auto& device = globalDevice.Lock();
 
     renderpass = device.CreateRenderPassBuilder()
         .SetAttachmentCount(2)
@@ -337,13 +339,15 @@ Renderer::Renderer(const nxt::Device &device, const nxt::Queue &queue, const Cam
             .SetLayout(pipelineLayout)
             .GetResult();
     }
+
+    globalDevice.Unlock();
 }
 
 void Renderer::Render(nxt::Texture &texture) {
     auto backBufferView = texture.CreateTextureViewBuilder().GetResult();
 
     gBufferTexture.TransitionUsage(nxt::TextureUsageBit::OutputAttachment);
-    auto framebuffer = device.CreateFramebufferBuilder()
+    auto framebuffer = LOCK_AND_RELEASE(globalDevice, CreateFramebufferBuilder())
         .SetRenderPass(renderpass)
         .SetDimensions(640, 480)
         .SetAttachment(0, gBufferView)
@@ -357,7 +361,7 @@ void Renderer::Render(nxt::Texture &texture) {
     cameraBuffer.TransitionUsage(nxt::BufferUsageBit::TransferDst);
     cameraBuffer.SetSubData(0, sizeof(layout::camera_block) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(&cameraBlock));
 
-    auto commands = device.CreateCommandBufferBuilder();
+    auto commands = LOCK_AND_RELEASE(globalDevice, CreateCommandBufferBuilder());
 
     commands.TransitionBufferUsage(cameraBuffer, nxt::BufferUsageBit::Uniform);
 
@@ -377,7 +381,7 @@ void Renderer::Render(nxt::Texture &texture) {
         for (const DrawInfo& draw : model->GetCommands()) {
 
             {
-                auto modelBindGroup = device.CreateBindGroupBuilder()
+                auto modelBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
                     .SetUsage(nxt::BindGroupUsage::Frozen)
                     .SetLayout(layout::modelLayout)
                     .SetBufferViews(0, 1, &draw.uniformBufferView)
@@ -409,7 +413,7 @@ void Renderer::Render(nxt::Texture &texture) {
                     draw.vertexBufferView.Clone(),
                 };
 
-                auto modelBindGroup = device.CreateBindGroupBuilder()
+                auto modelBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
                     .SetUsage(nxt::BindGroupUsage::Frozen)
                     .SetLayout(modelBindGroupLayout)
                     .SetBufferViews(0, 1, &draw.uniformBufferView)
@@ -417,7 +421,7 @@ void Renderer::Render(nxt::Texture &texture) {
                     .SetTextureViews(4, 3, &draw.diffuseTexture)
                     .GetResult();
 
-                auto computeBindGroup = device.CreateBindGroupBuilder()
+                auto computeBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
                     .SetUsage(nxt::BindGroupUsage::Frozen)
                     .SetLayout(computeBindGroupLayout)
                     .SetSamplers(0, 1, &default::defaultSampler)
@@ -442,7 +446,7 @@ void Renderer::Render(nxt::Texture &texture) {
     commands.CopyBufferToTexture(computeOutputBuffer, 0, 0, texture, 0, 0, 0, 640, 480, 1, 0);
 
     auto cmds = commands.GetResult();
-    queue.Submit(1, &cmds);
+    LOCK_AND_RELEASE_VOID(globalQueue, Submit(1, &cmds));
 }
 
 void Renderer::Quit() {

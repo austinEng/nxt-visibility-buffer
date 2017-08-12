@@ -9,7 +9,7 @@
 class Renderer {
 
     public:
-        Renderer(const nxt::Device &device, const nxt::Queue &queue, const Camera& camera, const Scene& scene);
+        Renderer(const Camera& camera, const Scene& scene);
         Renderer(const Renderer &other) = delete;
         Renderer& operator=(const Renderer &other) = delete;
 
@@ -18,8 +18,6 @@ class Renderer {
         bool ShouldQuit() const;
 
     private:
-        nxt::Device device;
-        nxt::Queue queue;
         const Scene& scene;
         const Camera& camera;
         std::thread _thread;

@@ -1,6 +1,7 @@
 
-#include "Viewport.h"
 #include "Binding.h"
+#include "Globals.h"
+#include "Viewport.h"
 #include <GLFW/glfw3.h>
 
 extern uint64_t updateSerial;
@@ -22,8 +23,8 @@ bool Viewport::ShouldQuit() const {
     return shouldQuit;
 }
 
-void Viewport::Initialize(const nxt::Device& device) {
-    swapchain = GetSwapChain(device);
+void Viewport::Initialize() {
+    swapchain = GetSwapChain(globalDevice.Get());
     swapchain.Configure(nxt::TextureFormat::R8G8B8A8Unorm, 640, 480);
 }
 
@@ -35,8 +36,8 @@ void Viewport::Frame(Renderer* renderer) {
     DoFlush();
 }
 
-void Viewport::Loop(Viewport* viewport, const nxt::Device& device, const nxt::Queue& queue, Renderer* renderer) {
-    viewport->Initialize(device);
+void Viewport::Loop(Viewport* viewport, Renderer* renderer) {
+    viewport->Initialize();
 
     while (!viewport->ShouldQuit()) {
         viewport->WaitForChanges();

@@ -27,7 +27,7 @@ class Viewport {
         uint64_t lastUpdatedSerial = 0;
         bool shouldQuit = false;
 
-        void Initialize(const nxt::Device& device);
+        void Initialize();
         void Frame(Renderer* renderer);
-        static void Loop(Viewport* viewport, const nxt::Device& device, const nxt::Queue& queue, Renderer* renderer);
+        static void Loop(Viewport* viewport, Renderer* renderer);
 };

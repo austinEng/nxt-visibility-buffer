@@ -4,6 +4,11 @@
 #include <glm/glm/mat4x4.hpp>
 #include <nxt/nxtcpp.h>
 
+#include "LockedObject.h"
+
+extern LockedObject<nxt::Device> globalDevice;
+extern LockedObject<nxt::Queue> globalQueue;
+
 namespace layout {
 
     struct camera_block {

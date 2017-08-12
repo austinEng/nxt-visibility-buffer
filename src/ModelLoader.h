@@ -20,7 +20,7 @@ class ModelLoader {
         template<typename... Args>
         ModelLoader(Args&... args) : _thread(&ModelLoader::Start, this, std::forward<Args>(args)...) { }
 
-        void Start(const nxt::Device& device, const nxt::Queue& queue, std::string gltfPath, Model* model, const std::function<void(ModelLoader*, Model*)> &callback);
+        void Start(std::string gltfPath, Model* model, const std::function<void(ModelLoader*, Model*)> &callback);
 
         ModelLoader(const ModelLoader &other) = delete;
         ModelLoader& operator=(const ModelLoader &other) = delete;
@@ -51,7 +51,7 @@ public:
         uint32_t pad;
     };
 
-    void UpdateCommands(const nxt::Device& device, const nxt::Queue& queue);
+    void UpdateCommands();
 
     const std::vector<DrawInfo>& GetCommands() const;
     const nxt::Buffer& GetUniformBuffer() const;

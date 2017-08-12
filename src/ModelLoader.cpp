@@ -45,7 +45,7 @@ namespace {
     std::map<uint32_t, std::string> slotSemantics = { { 0, "POSITION" },{ 1, "NORMAL" },{ 2, "TEXCOORD_0" } };
 }
 
-void ModelLoader::Start(const nxt::Device& device, const nxt::Queue& queue, std::string gltfPath, Model* model, const std::function<void(ModelLoader*, Model*)> &callback) {
+void ModelLoader::Start(std::string gltfPath, Model* model, const std::function<void(ModelLoader*, Model*)> &callback) {
     printf("Loading %s\n", gltfPath.c_str());
 
     tinygltf::TinyGLTFLoader tinyGLTFLoader;
@@ -149,7 +149,7 @@ void ModelLoader::Start(const nxt::Device& device, const nxt::Queue& queue, std:
                 break;
             }
 
-            auto oSampler = device.CreateSamplerBuilder()
+            auto oSampler = LOCK_AND_RELEASE(globalDevice, CreateSamplerBuilder())
                 .SetFilterMode(magFilter, minFilter, mipmapFilter)
                 // TODO: wrap modes
                 .GetResult();
@@ -173,7 +173,7 @@ void ModelLoader::Start(const nxt::Device& device, const nxt::Queue& queue, std:
                 continue;
             }
 
-            auto oTexture = device.CreateTextureBuilder()
+            auto oTexture = LOCK_AND_RELEASE(globalDevice, CreateTextureBuilder())
                 .SetDimension(nxt::TextureDimension::e2D)
                 .SetExtent(iImage.width, iImage.height, 1)
                 .SetFormat(format)
@@ -197,7 +197,7 @@ void ModelLoader::Start(const nxt::Device& device, const nxt::Queue& queue, std:
                     uint32_t pixelsPerRow = rowPitch / 4;
                     for (uint32_t y = 0; y < height; ++y) {
                         for (uint32_t x = 0; x < width; ++x) {
-                            size_t oldIndex = x + y * height;
+                            size_t oldIndex = x + y * width;
                             size_t newIndex = x + y * pixelsPerRow;
                             if (iImage.component == 4) {
                                 newData[4 * newIndex + 0] = origData[4 * oldIndex + 0];
@@ -223,12 +223,14 @@ void ModelLoader::Start(const nxt::Device& device, const nxt::Queue& queue, std:
                 fprintf(stderr, "unsupported image.component %d\n", iImage.component);
             }
 
+            auto& device = globalDevice.Lock();
             nxt::Buffer staging = utils::CreateFrozenBufferFromData(device, data, rowPitch * iImage.height, nxt::BufferUsageBit::TransferSrc);
             auto cmdbuf = device.CreateCommandBufferBuilder()
                 .TransitionTextureUsage(oTexture, nxt::TextureUsageBit::TransferDst)
                 .CopyBufferToTexture(staging, 0, rowPitch, oTexture, 0, 0, 0, iImage.width, iImage.height, 1, 0)
                 .GetResult();
-            queue.Submit(1, &cmdbuf);
+            globalDevice.Unlock();
+            LOCK_AND_RELEASE_VOID(globalQueue, Submit(1, &cmdbuf));
             oTexture.FreezeUsage(nxt::TextureUsageBit::Sampled);
 
             model->textureViews[iTextureID] = oTexture.CreateTextureViewBuilder().GetResult();
@@ -265,13 +267,13 @@ void ModelLoader::Start(const nxt::Device& device, const nxt::Queue& queue, std:
         }
     }
 
-    model->UpdateCommands(device, queue);
+    model->UpdateCommands();
 
     callback(this, model);
 }
 
 
-void Model::UpdateCommands(const nxt::Device& device, const nxt::Queue& queue) {
+void Model::UpdateCommands() {
     rasterCommands.clear();
     uniforms.clear();
 
@@ -343,7 +345,7 @@ void Model::UpdateCommands(const nxt::Device& device, const nxt::Queue& queue) {
 
                     uint32_t indexBufferSize = static_cast<uint32_t>(sizeof(unsigned int) * indices.count);
 
-                    command.indexBuffer = device.CreateBufferBuilder()
+                    command.indexBuffer = LOCK_AND_RELEASE(globalDevice, CreateBufferBuilder())
                         .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Index | nxt::BufferUsageBit::Storage)
                         .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
                         .SetSize(indexBufferSize)
@@ -364,21 +366,21 @@ void Model::UpdateCommands(const nxt::Device& device, const nxt::Queue& queue) {
                     ) {
                     auto it0 = prim.attributes.find(attribute);
                     if (it0 == prim.attributes.end()) {
-                        fprintf(stderr, "Missing %s attribute\n", it0->first.c_str());
+                        fprintf(stderr, "Missing %s attribute\n", attribute);
                         return;
                     }
                     const auto& accessor = scene.accessors.at(it0->second);
 
                     auto it1 = scene.bufferViews.find(accessor.bufferView);
                     if (it1 == scene.bufferViews.end()) {
-                        fprintf(stderr, "Missing buffer view for %s\n", it1->first.c_str());
+                        fprintf(stderr, "Missing buffer view for %s\n", accessor.bufferView);
                         return;
                     }
                     const auto& bufferView = it1->second;
 
                     auto it2 = scene.buffers.find(bufferView.buffer);
                     if (it2 == scene.buffers.end()) {
-                        fprintf(stderr, "Missing buffer for %s\n", it2->first.c_str());
+                        fprintf(stderr, "Missing buffer for %s\n", bufferView.buffer);
                         return;
                     }
                     const auto& buffer = it2->second;
@@ -388,32 +390,40 @@ void Model::UpdateCommands(const nxt::Device& device, const nxt::Queue& queue) {
 
                 LoadAttribute("POSITION", [](std::vector<Vertex>& vertices, unsigned int vertexCount, const tinygltf::Accessor& accessor, const tinygltf::BufferView& bufferView, const tinygltf::Buffer& buffer) {
                     if (accessor.componentType != gl::Float) {
-                        fprintf(stderr, "Accessor must be float type\n");
+                        fprintf(stderr, "POSITION must be float type\n");
                         return;
                     }
 
                     if (accessor.byteStride != 12) {
-                        fprintf(stderr, "Accessor must have byte stride 12\n");
+                        fprintf(stderr, "POSITION must have byte stride 12\n");
                         return;
                     }
 
                     for (unsigned int i = 0; i < vertexCount; ++i) {
+                        if (bufferView.byteOffset + accessor.byteOffset + i * accessor.byteStride >= buffer.data.size()) {
+                            fprintf(stderr, "POSITION accessor out of bounds\n");
+                            break;
+                        }
                         vertices[i].position = *reinterpret_cast<const glm::vec3*>(&buffer.data.at(bufferView.byteOffset + accessor.byteOffset + i * accessor.byteStride));
                     }
                 });
 
                 LoadAttribute("NORMAL", [](std::vector<Vertex>& vertices, unsigned int vertexCount, const tinygltf::Accessor& accessor, const tinygltf::BufferView& bufferView, const tinygltf::Buffer& buffer) {
                     if (accessor.componentType != gl::Float) {
-                        fprintf(stderr, "Accessor must be float type\n");
+                        fprintf(stderr, "NORMAL must be float type\n");
                         return;
                     }
 
                     if (accessor.byteStride != 12) {
-                        fprintf(stderr, "Accessor must have byte stride 12\n");
+                        fprintf(stderr, "NORMAL must have byte stride 12\n");
                         return;
                     }
 
                     for (unsigned int i = 0; i < vertexCount; ++i) {
+                        if (bufferView.byteOffset + accessor.byteOffset + i * accessor.byteStride >= buffer.data.size()) {
+                            fprintf(stderr, "NORMAL accessor out of bounds\n");
+                            break;
+                        }
                         glm::vec3 normal = *reinterpret_cast<const glm::vec3*>(&buffer.data.at(bufferView.byteOffset + accessor.byteOffset + i * accessor.byteStride));
                         normal = glm::normalize(normal);
                         uint16_t x = static_cast<uint16_t>(((1 << 16) - 1) * (normal.x * 0.5 + 0.5));
@@ -424,16 +434,20 @@ void Model::UpdateCommands(const nxt::Device& device, const nxt::Queue& queue) {
 
                 LoadAttribute("TEXCOORD_0", [](std::vector<Vertex>& vertices, unsigned int vertexCount, const tinygltf::Accessor& accessor, const tinygltf::BufferView& bufferView, const tinygltf::Buffer& buffer) {
                     if (accessor.componentType != gl::Float) {
-                        fprintf(stderr, "Accessor must be float type\n");
+                        fprintf(stderr, "TEXCOORD_0 must be float type\n");
                         return;
                     }
 
                     if (accessor.byteStride != 8) {
-                        fprintf(stderr, "Accessor must have byte stride 8\n");
+                        fprintf(stderr, "TEXCOORD_0 must have byte stride 8\n");
                         return;
                     }
 
                     for (unsigned int i = 0; i < vertexCount; ++i) {
+                        if (bufferView.byteOffset + accessor.byteOffset + i * accessor.byteStride >= buffer.data.size()) {
+                            fprintf(stderr, "TEXCOORD_0 accessor out of bounds\n");
+                            break;
+                        }
                         glm::vec2 texCoord = *reinterpret_cast<const glm::vec2*>(&buffer.data.at(bufferView.byteOffset + accessor.byteOffset + i * accessor.byteStride));
                         uint16_t x = static_cast<uint16_t>(((1 << 16) - 1) * texCoord.x);
                         uint16_t y = static_cast<uint16_t>(((1 << 16) - 1) * texCoord.y);
@@ -442,7 +456,7 @@ void Model::UpdateCommands(const nxt::Device& device, const nxt::Queue& queue) {
                 });
 
                 uint32_t vertexBufferSize = static_cast<uint32_t>(vertexCount * sizeof(Vertex));
-                command.vertexBuffer = device.CreateBufferBuilder()
+                command.vertexBuffer = LOCK_AND_RELEASE(globalDevice, CreateBufferBuilder())
                     .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Vertex | nxt::BufferUsageBit::Storage)
                     .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
                     .SetSize(static_cast<uint32_t>(vertexBufferSize))
@@ -519,7 +533,7 @@ void Model::UpdateCommands(const nxt::Device& device, const nxt::Queue& queue) {
     assert(rasterCommands.size() == uniforms.size());
 
     if (!uniformBuffer) {
-        uniformBuffer = device.CreateBufferBuilder()
+        uniformBuffer = LOCK_AND_RELEASE(globalDevice, CreateBufferBuilder())
             .SetAllowedUsage(nxt::BufferUsageBit::Uniform | nxt::BufferUsageBit::TransferDst)
             .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
             .SetSize(sizeof(layout::model_block) * static_cast<uint32_t>(uniforms.size()))

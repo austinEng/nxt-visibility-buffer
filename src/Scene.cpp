@@ -4,8 +4,10 @@
 #include <common/Constants.h>
 #include <common/Math.h>
 #include <common/Assert.h>
-#include "Scene.h"
 #include "Binding.h"
+#include "Globals.h"
+#include "Scene.h"
+
 extern uint64_t updateSerial;
 
 namespace gl {
@@ -29,9 +31,6 @@ namespace gl {
         FloatVec3 = 0x8B51,
         FloatVec4 = 0x8B52,
     };
-}
-
-Scene::Scene(const nxt::Device& device, const nxt::Queue& queue) : device(device.Clone()), queue(queue.Clone()) {
 }
 
 void Scene::AddModel(std::string gltfPath) {
@@ -60,7 +59,7 @@ void Scene::AddModel(std::string gltfPath) {
     };
 
     modelLoaderMutex.lock();
-    loaders.push_back(new ModelLoader(device.Clone(), queue.Clone(), gltfPath, model, callback));
+    loaders.push_back(new ModelLoader(gltfPath, model, callback));
     printf("%d models loading...\n", loaders.size());
     modelLoaderMutex.unlock();
 }

@@ -45,6 +45,7 @@ void Scene::AddModel(std::string gltfPath) {
         if (model != nullptr) {
             printf("Successfully loaded %s\n", gltfPath.c_str());
             models.push_back(model);
+            modelUploadSerial++;
             updateSerial++;
         } else {
             fprintf(stderr, "Failed to load %s\n", gltfPath.c_str());
@@ -71,6 +72,16 @@ Scene::~Scene() {
     }
 }
 
+void Scene::UpdateModelList() {
+    modelLoaderMutex.lock();
+    if (currentModelUploadSerial != modelUploadSerial) {    
+        currentModelUploadSerial = modelUploadSerial;
+        currentModels.swap(models);
+        models = currentModels;
+    }
+    modelLoaderMutex.unlock();
+}
+
 const std::vector<Model*>& Scene::GetModels() const {
-    return models;
+    return currentModels;
 }

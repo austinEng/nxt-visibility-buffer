@@ -11,7 +11,7 @@ namespace {
     }
 }
 
-Renderer::Renderer(const Camera& camera, const Scene& scene)
+Renderer::Renderer(const Camera& camera, Scene& scene)
     : scene(scene), camera(camera), _thread(Loop, this) {
 
     auto& device = globalDevice.Lock();
@@ -376,6 +376,9 @@ Renderer::Renderer(const Camera& camera, const Scene& scene)
 }
 
 void Renderer::Render(nxt::Texture &texture) {
+    scene.UpdateModelList();
+    const auto& models = scene.GetModels();
+
     auto backBufferView = texture.CreateTextureViewBuilder().GetResult();
 
     gBufferTexture.TransitionUsage(nxt::TextureUsageBit::OutputAttachment);
@@ -388,7 +391,7 @@ void Renderer::Render(nxt::Texture &texture) {
 
     uint32_t drawCount = 0;
 
-    for (Model* model : scene.GetModels()) {
+    for (Model* model : models) {
         for (const DrawInfo& draw : model->GetCommands()) {
             drawCount++;
         }
@@ -469,7 +472,7 @@ void Renderer::Render(nxt::Texture &texture) {
     commands.BeginRenderSubpass();
     commands.SetRenderPipeline(rasterizePipeline);
     commands.SetBindGroup(0, cameraBindGroup);
-    for (Model* model : scene.GetModels()) {
+    for (Model* model : models) {
         for (const DrawInfo& draw : model->GetCommands()) {
             auto modelBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
                 .SetUsage(nxt::BindGroupUsage::Frozen)
@@ -490,7 +493,7 @@ void Renderer::Render(nxt::Texture &texture) {
     commands.EndRenderSubpass();
     commands.EndRenderPass();
 
-    for (Model* model : scene.GetModels()) {
+    for (Model* model : models) {
         for (const DrawInfo& draw : model->GetCommands()) {
             commands.TransitionBufferUsage(draw.indexBuffer, nxt::BufferUsageBit::Storage);
             commands.TransitionBufferUsage(draw.vertexBuffer, nxt::BufferUsageBit::Storage);
@@ -504,7 +507,7 @@ void Renderer::Render(nxt::Texture &texture) {
     commands.SetComputePipeline(shadingPipeline);
     commands.SetBindGroup(0, cameraBindGroup);
 
-    for (Model* model : scene.GetModels()) {
+    for (Model* model : models) {
         for (const DrawInfo& draw : model->GetCommands()) {
             nxt::BufferView computeBufferViews[] = {
                 computeOutputBufferView.Clone(),
@@ -543,7 +546,9 @@ void Renderer::Render(nxt::Texture &texture) {
     commands.CopyBufferToTexture(computeOutputBuffer, 0, 0, texture, 0, 0, 0, 640, 480, 1, 0);
 
     auto cmds = commands.GetResult();
-    LOCK_AND_RELEASE_VOID(globalQueue, Submit(1, &cmds));
+    LOCK_IN_SCOPE(globalDevice, [&](nxt::Device&) {
+        globalQueue.Submit(1, &cmds);
+    })
 }
 
 void Renderer::Quit() {

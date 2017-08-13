@@ -9,7 +9,7 @@
 class Renderer {
 
     public:
-        Renderer(const Camera& camera, const Scene& scene);
+        Renderer(const Camera& camera, Scene& scene);
         Renderer(const Renderer &other) = delete;
         Renderer& operator=(const Renderer &other) = delete;
 
@@ -18,7 +18,7 @@ class Renderer {
         bool ShouldQuit() const;
 
     private:
-        const Scene& scene;
+        Scene& scene;
         const Camera& camera;
         std::thread _thread;
         bool shouldQuit = false;

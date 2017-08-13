@@ -6,6 +6,21 @@
 template <typename Object>
 class LockedObject {
     public:
+
+        class ScopedLock {
+            public:
+                ScopedLock(LockedObject& lock) : lock(lock) {
+                    lock.Lock();
+                }
+
+                ~ScopedLock() {
+                    lock.Unlock();
+                }
+
+            private:
+                LockedObject& lock;
+        };
+
         LockedObject() { }
         LockedObject(const Object &other) : object(other.Clone()) { }
         LockedObject& operator=(const Object& other) { object = other.Clone(); return *this; }
@@ -30,10 +45,14 @@ class LockedObject {
             mutex.unlock();
         }
 
+        ScopedLock MakeScopedLock() {
+            return ScopedLock(*this);
+        }
+
     private:
         std::mutex mutex;
         Object object;
 };
 
 #define LOCK_AND_RELEASE(object, body) [&](){ auto& o = object.Lock().body; object.Unlock(); return std::move(o); }()
-#define LOCK_AND_RELEASE_VOID(object, body) [&](){ object.Lock().body; object.Unlock(); }()
+#define LOCK_IN_SCOPE(object, body) { auto o = object.MakeScopedLock(); body (object.Get()); }

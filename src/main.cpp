@@ -18,7 +18,7 @@
 
 uint64_t updateSerial = 1;
 LockedObject<nxt::Device> globalDevice;
-LockedObject<nxt::Queue> globalQueue;
+nxt::Queue globalQueue;
 
 namespace {
     Camera camera;
@@ -84,82 +84,80 @@ void frame(const nxt::SwapChain& swapchain) {
 }
 
 void init() {
-    auto& device = globalDevice.Lock();
-
-    layout::cameraLayout = device.CreateBindGroupLayoutBuilder()
-        .SetBindingsType(nxt::ShaderStageBit::Vertex | nxt::ShaderStageBit::Compute, nxt::BindingType::UniformBuffer, 0, 1)
-        .GetResult();
-
-    layout::modelLayout = device.CreateBindGroupLayoutBuilder()
-        .SetBindingsType(nxt::ShaderStageBit::Vertex | nxt::ShaderStageBit::Compute, nxt::BindingType::UniformBuffer, 0, 1)
-        .GetResult();
-
-    {
-        auto texture = device.CreateTextureBuilder()
-            .SetDimension(nxt::TextureDimension::e2D)
-            .SetExtent(1, 1, 1)
-            .SetFormat(nxt::TextureFormat::R8G8B8A8Unorm)
-            .SetMipLevels(1)
-            .SetAllowedUsage(nxt::TextureUsageBit::TransferDst | nxt::TextureUsageBit::Sampled)
+    LOCK_IN_SCOPE(globalDevice, [&](nxt::Device& device) {
+        layout::cameraLayout = device.CreateBindGroupLayoutBuilder()
+            .SetBindingsType(nxt::ShaderStageBit::Vertex | nxt::ShaderStageBit::Compute, nxt::BindingType::UniformBuffer, 0, 1)
             .GetResult();
 
-        uint32_t white = 0xffffffff;
-        nxt::Buffer staging = utils::CreateFrozenBufferFromData(device, &white, sizeof(white), nxt::BufferUsageBit::TransferSrc);
-        auto cmdbuf = device.CreateCommandBufferBuilder()
-            .TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst)
-            .CopyBufferToTexture(staging, 0, 256, texture, 0, 0, 0, 1, 1, 1, 0)
-            .GetResult();
-        LOCK_AND_RELEASE_VOID(globalQueue, Submit(1, &cmdbuf));
-        texture.FreezeUsage(nxt::TextureUsageBit::Sampled);
-
-        default::defaultDiffuse = texture.CreateTextureViewBuilder().GetResult();
-    }
-
-    {
-        auto texture = device.CreateTextureBuilder()
-            .SetDimension(nxt::TextureDimension::e2D)
-            .SetExtent(1, 1, 1)
-            .SetFormat(nxt::TextureFormat::R8G8B8A8Unorm)
-            .SetMipLevels(1)
-            .SetAllowedUsage(nxt::TextureUsageBit::TransferDst | nxt::TextureUsageBit::Sampled)
+        layout::modelLayout = device.CreateBindGroupLayoutBuilder()
+            .SetBindingsType(nxt::ShaderStageBit::Vertex | nxt::ShaderStageBit::Compute, nxt::BindingType::UniformBuffer, 0, 1)
             .GetResult();
 
-        uint32_t up = 0x0000ff00;
-        nxt::Buffer staging = utils::CreateFrozenBufferFromData(device, &up, sizeof(up), nxt::BufferUsageBit::TransferSrc);
-        auto cmdbuf = device.CreateCommandBufferBuilder()
-            .TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst)
-            .CopyBufferToTexture(staging, 0, 256, texture, 0, 0, 0, 1, 1, 1, 0)
-            .GetResult();
-        LOCK_AND_RELEASE_VOID(globalQueue, Submit(1, &cmdbuf));
-        texture.FreezeUsage(nxt::TextureUsageBit::Sampled);
+        {
+            auto texture = device.CreateTextureBuilder()
+                .SetDimension(nxt::TextureDimension::e2D)
+                .SetExtent(1, 1, 1)
+                .SetFormat(nxt::TextureFormat::R8G8B8A8Unorm)
+                .SetMipLevels(1)
+                .SetAllowedUsage(nxt::TextureUsageBit::TransferDst | nxt::TextureUsageBit::Sampled)
+                .GetResult();
 
-        default::defaultNormal = texture.CreateTextureViewBuilder().GetResult();
-    }
+            uint32_t white = 0xffffffff;
+            nxt::Buffer staging = utils::CreateFrozenBufferFromData(device, &white, sizeof(white), nxt::BufferUsageBit::TransferSrc);
+            auto cmdbuf = device.CreateCommandBufferBuilder()
+                .TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst)
+                .CopyBufferToTexture(staging, 0, 256, texture, 0, 0, 0, 1, 1, 1, 0)
+                .GetResult();
+            globalQueue.Submit(1, &cmdbuf);
+            texture.FreezeUsage(nxt::TextureUsageBit::Sampled);
 
-    {
-        auto texture = device.CreateTextureBuilder()
-            .SetDimension(nxt::TextureDimension::e2D)
-            .SetExtent(1, 1, 1)
-            .SetFormat(nxt::TextureFormat::R8G8B8A8Unorm)
-            .SetMipLevels(1)
-            .SetAllowedUsage(nxt::TextureUsageBit::TransferDst | nxt::TextureUsageBit::Sampled)
-            .GetResult();
+            default::defaultDiffuse = texture.CreateTextureViewBuilder().GetResult();
+        }
 
-        uint32_t black = 0x00000000;
-        nxt::Buffer staging = utils::CreateFrozenBufferFromData(device, &black, sizeof(black), nxt::BufferUsageBit::TransferSrc);
-        auto cmdbuf = device.CreateCommandBufferBuilder()
-            .TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst)
-            .CopyBufferToTexture(staging, 0, 256, texture, 0, 0, 0, 1, 1, 1, 0)
-            .GetResult();
-        LOCK_AND_RELEASE_VOID(globalQueue, Submit(1, &cmdbuf));
-        texture.FreezeUsage(nxt::TextureUsageBit::Sampled);
+        {
+            auto texture = device.CreateTextureBuilder()
+                .SetDimension(nxt::TextureDimension::e2D)
+                .SetExtent(1, 1, 1)
+                .SetFormat(nxt::TextureFormat::R8G8B8A8Unorm)
+                .SetMipLevels(1)
+                .SetAllowedUsage(nxt::TextureUsageBit::TransferDst | nxt::TextureUsageBit::Sampled)
+                .GetResult();
 
-        default::defaultSpecular = texture.CreateTextureViewBuilder().GetResult();
-    }
+            uint32_t up = 0x0000ff00;
+            nxt::Buffer staging = utils::CreateFrozenBufferFromData(device, &up, sizeof(up), nxt::BufferUsageBit::TransferSrc);
+            auto cmdbuf = device.CreateCommandBufferBuilder()
+                .TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst)
+                .CopyBufferToTexture(staging, 0, 256, texture, 0, 0, 0, 1, 1, 1, 0)
+                .GetResult();
+            globalQueue.Submit(1, &cmdbuf);
+            texture.FreezeUsage(nxt::TextureUsageBit::Sampled);
 
-    default::defaultSampler = device.CreateSamplerBuilder().SetFilterMode(nxt::FilterMode::Linear, nxt::FilterMode::Linear, nxt::FilterMode::Linear).GetResult();
+            default::defaultNormal = texture.CreateTextureViewBuilder().GetResult();
+        }
 
-    globalDevice.Unlock();
+        {
+            auto texture = device.CreateTextureBuilder()
+                .SetDimension(nxt::TextureDimension::e2D)
+                .SetExtent(1, 1, 1)
+                .SetFormat(nxt::TextureFormat::R8G8B8A8Unorm)
+                .SetMipLevels(1)
+                .SetAllowedUsage(nxt::TextureUsageBit::TransferDst | nxt::TextureUsageBit::Sampled)
+                .GetResult();
+
+            uint32_t black = 0x00000000;
+            nxt::Buffer staging = utils::CreateFrozenBufferFromData(device, &black, sizeof(black), nxt::BufferUsageBit::TransferSrc);
+            auto cmdbuf = device.CreateCommandBufferBuilder()
+                .TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst)
+                .CopyBufferToTexture(staging, 0, 256, texture, 0, 0, 0, 1, 1, 1, 0)
+                .GetResult();
+            globalQueue.Submit(1, &cmdbuf);
+            texture.FreezeUsage(nxt::TextureUsageBit::Sampled);
+
+            default::defaultSpecular = texture.CreateTextureViewBuilder().GetResult();
+        }
+
+        default::defaultSampler = device.CreateSamplerBuilder().SetFilterMode(nxt::FilterMode::Linear, nxt::FilterMode::Linear, nxt::FilterMode::Linear).GetResult();
+    })
 }
 
 int main(int argc, const char* argv[]) {

@@ -229,11 +229,11 @@ void ModelLoader::Start(std::string gltfPath, Model* model, const std::function<
                 .TransitionTextureUsage(oTexture, nxt::TextureUsageBit::TransferDst)
                 .CopyBufferToTexture(staging, 0, rowPitch, oTexture, 0, 0, 0, iImage.width, iImage.height, 1, 0)
                 .GetResult();
+            globalQueue.Submit(1, &cmdbuf);
+            model->textureViews[iTextureID] = oTexture.CreateTextureViewBuilder().GetResult();
             globalDevice.Unlock();
-            LOCK_AND_RELEASE_VOID(globalQueue, Submit(1, &cmdbuf));
             oTexture.FreezeUsage(nxt::TextureUsageBit::Sampled);
 
-            model->textureViews[iTextureID] = oTexture.CreateTextureViewBuilder().GetResult();
         }
     }
 
@@ -315,14 +315,16 @@ void Model::UpdateCommands() {
 
                     uint32_t indexBufferSize = static_cast<uint32_t>(sizeof(unsigned int) * indices.count);
 
-                    command.indexBuffer = LOCK_AND_RELEASE(globalDevice, CreateBufferBuilder())
-                        .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Index | nxt::BufferUsageBit::Storage)
-                        .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
-                        .SetSize(indexBufferSize)
-                        .GetResult();
-                    command.count = static_cast<uint32_t>(indices.count);
-                    command.indexBuffer.SetSubData(0, static_cast<uint32_t>(indexBufferSize) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(indices32Bit.data()));
-                    command.indexBufferView = command.indexBuffer.CreateBufferViewBuilder().SetExtent(0, indexBufferSize).GetResult();
+                    LOCK_IN_SCOPE(globalDevice, [&](nxt::Device& device) {
+                        command.indexBuffer = device.CreateBufferBuilder()
+                            .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Index | nxt::BufferUsageBit::Storage)
+                            .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
+                            .SetSize(indexBufferSize)
+                            .GetResult();
+                        command.count = static_cast<uint32_t>(indices.count);
+                        command.indexBuffer.SetSubData(0, static_cast<uint32_t>(indexBufferSize) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(indices32Bit.data()));
+                        command.indexBufferView = command.indexBuffer.CreateBufferViewBuilder().SetExtent(0, indexBufferSize).GetResult();
+                    })
                 }
 
                 auto LoadAttribute = [&](const char* attribute,
@@ -442,14 +444,15 @@ void Model::UpdateCommands() {
                 });
 
                 uint32_t vertexBufferSize = static_cast<uint32_t>(vertexCount * sizeof(Vertex));
-                command.vertexBuffer = LOCK_AND_RELEASE(globalDevice, CreateBufferBuilder())
-                    .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Vertex | nxt::BufferUsageBit::Storage)
-                    .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
-                    .SetSize(static_cast<uint32_t>(vertexBufferSize))
-                    .GetResult();
-
-                command.vertexBuffer.SetSubData(0, static_cast<uint32_t>(vertexBufferSize) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(vertices.data()));
-                command.vertexBufferView = command.vertexBuffer.CreateBufferViewBuilder().SetExtent(0, vertexBufferSize).GetResult();
+                LOCK_IN_SCOPE(globalDevice, [&](nxt::Device& device) {
+                    command.vertexBuffer = device.CreateBufferBuilder()
+                        .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Vertex | nxt::BufferUsageBit::Storage)
+                        .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
+                        .SetSize(static_cast<uint32_t>(vertexBufferSize))
+                        .GetResult();
+                    command.vertexBuffer.SetSubData(0, static_cast<uint32_t>(vertexBufferSize) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(vertices.data()));
+                    command.vertexBufferView = command.vertexBuffer.CreateBufferViewBuilder().SetExtent(0, vertexBufferSize).GetResult();
+                })
 
                 [&]() {
                     auto it = scene.materials.find(prim.material);
@@ -518,21 +521,23 @@ void Model::UpdateCommands() {
 
     assert(rasterCommands.size() == uniforms.size());
 
-    if (!uniformBuffer) {
-        uniformBuffer = LOCK_AND_RELEASE(globalDevice, CreateBufferBuilder())
-            .SetAllowedUsage(nxt::BufferUsageBit::Uniform | nxt::BufferUsageBit::TransferDst)
-            .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
-            .SetSize(sizeof(layout::model_block) * static_cast<uint32_t>(uniforms.size()))
-            .GetResult();
-    } else {
-        uniformBuffer.TransitionUsage(nxt::BufferUsageBit::TransferDst);
-    }
+    LOCK_IN_SCOPE(globalDevice, [&](nxt::Device &device) {
+        if (!uniformBuffer) {
+            uniformBuffer = device.CreateBufferBuilder()
+                .SetAllowedUsage(nxt::BufferUsageBit::Uniform | nxt::BufferUsageBit::TransferDst)
+                .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
+                .SetSize(sizeof(layout::model_block) * static_cast<uint32_t>(uniforms.size()))
+                .GetResult();
+        } else {
+            uniformBuffer.TransitionUsage(nxt::BufferUsageBit::TransferDst);
+        }
 
-    uniformBuffer.SetSubData(0, sizeof(layout::model_block) * static_cast<uint32_t>(uniforms.size()) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(uniforms.data()));
+        uniformBuffer.SetSubData(0, sizeof(layout::model_block) * static_cast<uint32_t>(uniforms.size()) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(uniforms.data()));
 
-    for (unsigned int i = 0; i < rasterCommands.size(); ++i) {
-        rasterCommands[i].uniformBufferView = uniformBuffer.CreateBufferViewBuilder().SetExtent(i * sizeof(layout::model_block), sizeof(layout::model_block)).GetResult();
-    }
+        for (unsigned int i = 0; i < rasterCommands.size(); ++i) {
+            rasterCommands[i].uniformBufferView = uniformBuffer.CreateBufferViewBuilder().SetExtent(i * sizeof(layout::model_block), sizeof(layout::model_block)).GetResult();
+        }
+    })
 }
 
 const std::vector<DrawInfo>& Model::GetCommands() const {

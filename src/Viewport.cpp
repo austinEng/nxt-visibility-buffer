@@ -32,8 +32,10 @@ void Viewport::Frame(Renderer* renderer) {
     nxt::Texture backbuffer = swapchain.GetNextTexture();
     renderer->Render(backbuffer);
     backbuffer.TransitionUsage(nxt::TextureUsageBit::Present);
+    globalDevice.Lock();
     swapchain.Present(backbuffer);
     DoFlush();
+    globalDevice.Unlock();
 }
 
 void Viewport::Loop(Viewport* viewport, Renderer* renderer) {

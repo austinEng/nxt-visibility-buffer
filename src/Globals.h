@@ -7,7 +7,7 @@
 #include "LockedObject.h"
 
 extern LockedObject<nxt::Device> globalDevice;
-extern LockedObject<nxt::Queue> globalQueue;
+extern nxt::Queue globalQueue;
 
 namespace layout {
 

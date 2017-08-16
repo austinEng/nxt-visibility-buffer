@@ -2,9 +2,9 @@
 #include "Camera.h"
 
 Camera::Camera()
-    : _azimuth(glm::radians(45.f)),
-    _altitude(glm::radians(30.f)),
-    _radius(10.f),
+    : _azimuth(glm::radians(0.f)),
+    _altitude(glm::radians(10.f)),
+    _radius(16.f),
     _center(0, 0, 0),
     _dirty(true) {
     Recalculate();

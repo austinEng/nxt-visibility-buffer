@@ -44,11 +44,12 @@ public:
 
     struct Vertex {
         glm::vec3 position = glm::vec3(0,0,0);
-        uint32_t normal = 0;
         uint32_t tangent = 0;
-        uint32_t texCoord = 0;
+        glm::vec3 normal = glm::vec3(0, 0, 0);
         uint32_t materialID = 0;
-        uint32_t pad;
+        glm::vec2 texCoord = glm::vec2(0, 0);
+        uint32_t pad0;
+        uint32_t pad1;
     };
 
     void UpdateCommands();

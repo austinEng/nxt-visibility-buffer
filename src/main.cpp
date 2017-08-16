@@ -123,7 +123,7 @@ void init() {
                 .SetAllowedUsage(nxt::TextureUsageBit::TransferDst | nxt::TextureUsageBit::Sampled)
                 .GetResult();
 
-            uint32_t up = 0x0000ff00;
+            uint32_t up = 0x00ff0000;
             nxt::Buffer staging = utils::CreateFrozenBufferFromData(device, &up, sizeof(up), nxt::BufferUsageBit::TransferSrc);
             auto cmdbuf = device.CreateCommandBufferBuilder()
                 .TransitionTextureUsage(texture, nxt::TextureUsageBit::TransferDst)
@@ -189,7 +189,7 @@ int main(int argc, const char* argv[]) {
 
     while (!ShouldQuit()) {
         glfwPollEvents();
-        utils::USleep(16000);
+        utils::USleep(8000);
     }
 
     viewport->Quit();

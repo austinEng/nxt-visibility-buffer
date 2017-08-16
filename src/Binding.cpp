@@ -54,7 +54,7 @@ nxt::Device CreateCppNXTDevice() {
     }
 
     binding->SetupGLFWWindowHints();
-    window = glfwCreateWindow(640, 480, "NXT window", nullptr, nullptr);
+    window = glfwCreateWindow(1280, 960, "NXT window", nullptr, nullptr);
     if (!window) {
         return nxt::Device();
     }

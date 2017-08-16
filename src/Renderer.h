@@ -27,6 +27,7 @@ class Renderer {
         nxt::Texture gBufferTexture;
         nxt::TextureView gBufferView;
         nxt::TextureView depthStencilView;
+        nxt::Framebuffer framebuffer;
         nxt::Buffer cameraBuffer;
         nxt::BufferView cameraBufferView;
         nxt::BindGroup cameraBindGroup;

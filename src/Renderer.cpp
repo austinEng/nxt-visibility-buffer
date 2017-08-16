@@ -20,6 +20,8 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
         .SetAttachmentCount(2)
         .AttachmentSetFormat(0, nxt::TextureFormat::R8G8B8A8Uint)
         .AttachmentSetFormat(1, nxt::TextureFormat::D32FloatS8Uint)
+        .AttachmentSetColorLoadOp(0, nxt::LoadOp::Clear)
+        .AttachmentSetDepthStencilLoadOps(1, nxt::LoadOp::Clear, nxt::LoadOp::Clear)
         .SetSubpassCount(1)
         .SubpassSetColorAttachment(0, 0, 0)
         .SubpassSetDepthStencilAttachment(0, 1)
@@ -27,7 +29,7 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
 
     gBufferTexture = device.CreateTextureBuilder()
         .SetDimension(nxt::TextureDimension::e2D)
-        .SetExtent(640, 480, 1)
+        .SetExtent(1280, 960, 1)
         .SetFormat(nxt::TextureFormat::R8G8B8A8Uint)
         .SetMipLevels(1)
         .SetAllowedUsage(nxt::TextureUsageBit::OutputAttachment | nxt::TextureUsageBit::Sampled)
@@ -37,7 +39,7 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
 
     auto depthStencilTexture = device.CreateTextureBuilder()
         .SetDimension(nxt::TextureDimension::e2D)
-        .SetExtent(640, 480, 1)
+        .SetExtent(1280, 960, 1)
         .SetFormat(nxt::TextureFormat::D32FloatS8Uint)
         .SetMipLevels(1)
         .SetAllowedUsage(nxt::TextureUsageBit::OutputAttachment)
@@ -45,6 +47,13 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
     depthStencilTexture.FreezeUsage(nxt::TextureUsageBit::OutputAttachment);
 
     depthStencilView = depthStencilTexture.CreateTextureViewBuilder().GetResult();
+
+    framebuffer = device.CreateFramebufferBuilder()
+        .SetRenderPass(renderpass)
+        .SetDimensions(1280, 960)
+        .SetAttachment(0, gBufferView)
+        .SetAttachment(1, depthStencilView)
+        .GetResult();
 
     cameraBuffer = device.CreateBufferBuilder()
         .SetAllowedUsage(nxt::BufferUsageBit::Uniform | nxt::BufferUsageBit::TransferDst)
@@ -142,7 +151,7 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
                 mat4 model;
                 mat4 modelInv;
             } u_model;
-            
+
             layout(set = 1, binding = 1) uniform sampler diffuseSampler;
             layout(set = 1, binding = 2) uniform sampler normalSampler;
             layout(set = 1, binding = 3) uniform sampler specularSampler;
@@ -153,22 +162,43 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
             layout(set = 2, binding = 0) uniform sampler gBufferSampler;
             layout(set = 2, binding = 1) uniform utexture2D gBuffer;
 
-            layout(set = 2, binding = 2) buffer OutputBuffer {
+            /*layout(set = 2, binding = 2) buffer OutputBuffer {
                 uint color;
             } fragColor[];
 
             layout(set = 2, binding = 3) buffer IndexBuffer {
                 uint index;
-            } indices[];
+            } indices[];*/
 
-            layout(set = 2, binding = 4) buffer VertexBuffer {
+            layout(std430, set = 2, binding = 2) buffer OutputBuffer {
+                uint fragColor[];
+            };
+
+            layout(std430, set = 2, binding = 3) buffer IndexBuffer {
+                uint indices[];
+            };
+            
+            struct Vertex {
+                vec3 position;
+                uint tangent;
+                vec3 normal;
+                uint materialID;
+                vec2 texCoord;
+                uint pad0;
+                uint pad1;
+            };
+
+            /*layout(set = 2, binding = 4) buffer VertexBuffer {
                 vec3 position;
                 uint normal;
                 uint tangent;
-                uint texCoord;
+                vec2 texCoord;
                 uint materialID;
-                uint pad;
-            } vertices[];
+            } vertices[];*/
+
+            layout(std430, set = 2, binding = 4) buffer VertexBuffer {
+                Vertex vertices[];
+            };
 
             layout(set = 3, binding = 0) uniform constant_block {
                 uint drawID;
@@ -176,6 +206,17 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
 
             uint packColor(uvec4 color) {
                 return (color.r & 0XFF) + ((color.g & 0XFF) << 8) + ((color.b & 0XFF) << 16) + ((color.a & 0XFF) << 24);
+            }
+
+            vec3 unpackNormal(uint normal, vec3 eye) {
+                vec3 n;
+                n.x = 2.0 * (float((normal >> 16) & 0xFFFF) / 0xFFFF - 0.5);
+                n.y = 2.0 * (float(normal & 0xFFFF) / 0xFFFF - 0.5);
+                n.z = sqrt(1-dot(n.xy, n.xy));
+                if (dot(n, eye) < 0) {
+                    n.z = -n.z;
+                }
+                return n;
             }
 
             vec3 unpackNormal(uint normal, float zDir) {
@@ -195,12 +236,12 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
 
             vec3 applyNormalMap(vec3 geomnor, vec3 normap) {
                 normap = normap * 2.0 - 1.0;
-                vec3 up = normalize(vec3(0.001, 1, 0.001));
+                vec3 up = normalize(vec3(0.001, 1, 0.001));                
                 vec3 surftan = normalize(cross(geomnor, up));
                 vec3 surfbinor = cross(geomnor, surftan);
                 return normap.y * surftan + normap.x * surfbinor + normap.z * geomnor;
             }
-            
+
             // Returns (b0, b1, b2, perspCorrect)
             vec4 calculateBarycentrics(vec4 p0_ndc, vec4 p1_ndc, vec4 p2_ndc, vec2 ndc) {
                 p0_ndc.xy /= p0_ndc.w;
@@ -240,14 +281,14 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
             }
 
             void main() {
-                uint outIndex = gl_GlobalInvocationID.x + 640 * gl_GlobalInvocationID.y;
+                uint outIndex = gl_GlobalInvocationID.x + 1280 * gl_GlobalInvocationID.y;
                 uvec4 gBufferVal = texelFetch( usampler2D(gBuffer, gBufferSampler), ivec2(gl_GlobalInvocationID.xy), 0 );
 
                 if ((gBufferVal.b & 0x80) == 0) {
                     if (mod(gl_GlobalInvocationID.x / 20 + gl_GlobalInvocationID.y / 20, 2) == 0) {
-                        fragColor[outIndex].color = packColor(uvec4(80, 80, 80, 255));
+                        fragColor[outIndex] = packColor(uvec4(80, 80, 80, 255));
                     } else {
-                        fragColor[outIndex].color = packColor(uvec4(50, 50, 50, 255));
+                        fragColor[outIndex] = packColor(uvec4(50, 50, 50, 255));
                     }
                     return;
                 }
@@ -257,13 +298,13 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
                 if (drawID != u_constants.drawID) {
                     return;
                 }
-                
-                uint primID = packColor(uvec4(gBufferVal.rgb, 0));
-                fragColor[outIndex].color = primID;
 
-                uint i0 = indices[3 * primID + 0].index;
-                uint i1 = indices[3 * primID + 1].index;
-                uint i2 = indices[3 * primID + 2].index;
+                uint primID = packColor(uvec4(gBufferVal.rgb, 0));
+                fragColor[outIndex] = primID;
+
+                uint i0 = indices[3 * primID + 0];
+                uint i1 = indices[3 * primID + 1];
+                uint i2 = indices[3 * primID + 2];
 
                 vec4 p0_object = vec4(vertices[i0].position, 1);
                 vec4 p1_object = vec4(vertices[i1].position, 1);
@@ -274,10 +315,10 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
                 vec4 p2_world = u_model.model * p2_object;
 
                 vec4 barys = calculateBarycentrics(
-                    u_camera.viewProj * p0_world, 
+                    u_camera.viewProj * p0_world,
                     u_camera.viewProj * p1_world,
                     u_camera.viewProj * p2_world,
-                    vec2(2.0, -2.0) * ((gl_GlobalInvocationID.xy / vec2(640.0, 480.0)) - vec2(0.5, 0.5))
+                    vec2(2.0, -2.0) * ((gl_GlobalInvocationID.xy / vec2(1280.0, 960.0)) - vec2(0.5, 0.5))
                 );
 
                 vec4 p_world = barycentricInterpolate(p0_world, p1_world, p2_world, barys);
@@ -285,46 +326,60 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
                 vec3 faceNormal = normalize(cross(vec3(p1_world - p0_world), vec3(p2_world - p0_world)));
                 float zDir = faceNormal.z / abs(faceNormal.z);
 
-                vec3 N = normalize(barycentricInterpolate(unpackNormal(vertices[i0].normal, zDir), unpackNormal(vertices[i1].normal, zDir), unpackNormal(vertices[i2].normal, zDir), barys));
-                vec2 texCoord = barycentricInterpolate(unpackTexcoord(vertices[i0].texCoord), unpackTexcoord(vertices[i1].texCoord), unpackTexcoord(vertices[i2].texCoord), barys);
+                vec3 eye_object = normalize(vec3(u_model.modelInv * vec4(u_camera.eye, 1.0)));
                 
+                // These attempt to reconstruct the z component from XY components in a uint. Doesn't always work.
+                // vec3 N = normalize(barycentricInterpolate(unpackNormal(vertices[i0].normal, eye_object), unpackNormal(vertices[i1].normal, eye_object), unpackNormal(vertices[i2].normal, eye_object), barys));
+                // vec3 N = normalize(barycentricInterpolate(unpackNormal(vertices[i0].normal, zDir), unpackNormal(vertices[i1].normal, zDir), unpackNormal(vertices[i2].normal, zDir), barys));
+                
+                vec3 N = normalize(barycentricInterpolate(vertices[i0].normal, vertices[i1].normal, vertices[i2].normal, barys));
+
+                // This can be used if coords are 0->1
+                // vec2 texCoord = barycentricInterpolate(unpackTexcoord(vertices[i0].texCoord), unpackTexcoord(vertices[i1].texCoord), unpackTexcoord(vertices[i2].texCoord), barys);
+                
+                vec2 texCoord = barycentricInterpolate(vertices[i0].texCoord, vertices[i1].texCoord, vertices[i2].texCoord, barys);
+
                 vec3 diffuseColor = texture(sampler2D(diffuseTexture, diffuseSampler), texCoord).rgb;
                 vec3 normalMap = texture(sampler2D(normalTexture, normalSampler), texCoord).rgb;
                 vec3 specularColor = texture(sampler2D(specularTexture, specularSampler), texCoord).rgb;
 
-                N = applyNormalMap(N, normalMap);
+                N = normalize(applyNormalMap(N, normalMap));
 
                 vec3 V = normalize(u_camera.eye - p_world.xyz);
 
                 // position, intensity
                 const vec4 lights[2] = vec4[2](
-                    vec4(10.0, 30.0, -20.0, 1.0),
-                    vec4(20.0, 20.0, 20.0, 0.5)
+                    vec4(10.0, 30.0, -20.0, 400.0),
+                    vec4(20.0, 20.0, 20.0, 200.0)
                 );
 
                 float diffuseTerm = 0;
                 float specularTerm = 0;
                 for (uint i = 0; i < 2; ++i) {
-                    vec3 L = normalize(lights[i].xyz - p_world.xyz);
+                    vec3 L = lights[i].xyz - p_world.xyz;
+                    float intensity = lights[i].w / pow(length(L), 2.0);
+                    L = normalize(L);
                     vec3 H = (L + V) / 2.0;
 
-                    specularTerm += lights[i].w * pow(max(dot(H, N), 0.0), 20.0);
-                    diffuseTerm += lights[i].w * max(dot(L, N), 0.0);
+                    specularTerm += intensity * pow(max(dot(H, N), 0.0), 20.0);
+                    diffuseTerm += intensity * max(dot(L, N), 0.0);
                 }
                 diffuseTerm = 0.15 + 0.85 * diffuseTerm;
                 vec3 composite = diffuseTerm * diffuseColor + specularTerm * specularColor;
 
                 composite = clamp(composite, vec3(0.0), vec3(1.0));
-                
-                fragColor[outIndex].color = packColor(uvec4(255 * vec4(composite, 1)));
-                // fragColor[outIndex].color = packColor(uvec4(255 * vec4(vec3(barys) * barys[3], 1)));
-                // fragColor[outIndex].color = packColor(uvec4(255 * vec4(abs(V), 1)));
-                // fragColor[outIndex].color = packColor(uvec4(255 * vec4(normalMap, 1)));
-                // fragColor[outIndex].color = packColor(uvec4(255 * vec4(vec3(b0, b1, b2), 1)));
-                // fragColor[outIndex].color = packColor(uvec4(255 * vec4((ndc + 1.0) * 0.5, 0, 1)));
-                // fragColor[outIndex].color = packColor(uvec4(255 * vec4(vec3(p_world), 1)));
-                // fragColor[outIndex].color = packColor(uvec4(255 * vec4(texCoord, 0, 1)));
-                // fragColor[outIndex].color = packColor(uvec4(255 * vec4(N, 1)));
+
+                fragColor[outIndex] = packColor(uvec4(255 * vec4(composite, 1)));
+                // fragColor[outIndex] = packColor(uvec4(255 * vec4(vec3(barys) * barys[3], 1)));
+                // fragColor[outIndex] = packColor(uvec4(255 * vec4(abs(V), 1)));
+                // fragColor[outIndex] = packColor(uvec4(255 * vec4(normalMap, 1)));
+                // fragColor[outIndex] = packColor(uvec4(255 * vec4(vec3(b0, b1, b2), 1)));
+                // fragColor[outIndex] = packColor(uvec4(255 * vec4((ndc + 1.0) * 0.5, 0, 1)));
+                // fragColor[outIndex] = packColor(uvec4(255 * vec4(vec3(p_world), 1)));
+                // fragColor[outIndex] = packColor(uvec4(255 * vec4(texCoord, 0, 1)));
+                // fragColor[outIndex] = packColor(uvec4(255 * vec4(abs(N), 1)));
+                // fragColor[outIndex] = primID;
+                // fragColor[outIndex] = packColor(uvec4(255 * vec4(normalize(eye_object), 1)));
             })");
 
         auto computeOutputLayout = device.CreateBindGroupLayoutBuilder()
@@ -343,7 +398,6 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
             .SetBindingsType(nxt::ShaderStageBit::Compute, nxt::BindingType::StorageBuffer, 2, 3) // output, index, vertex
             .GetResult();
 
-
         auto pipelineLayout = device.CreatePipelineLayoutBuilder()
             .SetBindGroupLayout(0, layout::cameraLayout)
             .SetBindGroupLayout(1, modelBindGroupLayout)
@@ -353,11 +407,11 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
 
         computeOutputBuffer = device.CreateBufferBuilder()
             .SetAllowedUsage(nxt::BufferUsageBit::TransferSrc | nxt::BufferUsageBit::Storage | nxt::BufferUsageBit::TransferDst)
-            .SetSize(640 * 480 * 4)
+            .SetSize(1280 * 960 * 4)
             .GetResult();
 
         computeOutputBufferView = computeOutputBuffer.CreateBufferViewBuilder()
-            .SetExtent(0, 640 * 480 * 4)
+            .SetExtent(0, 1280 * 960 * 4)
             .GetResult();
 
         computeOutputBindGroup = device.CreateBindGroupBuilder()
@@ -378,17 +432,6 @@ Renderer::Renderer(const Camera& camera, Scene& scene)
 void Renderer::Render(nxt::Texture &texture) {
     scene.UpdateModelList();
     const auto& models = scene.GetModels();
-
-    auto backBufferView = texture.CreateTextureViewBuilder().GetResult();
-
-    gBufferTexture.TransitionUsage(nxt::TextureUsageBit::OutputAttachment);
-    auto framebuffer = LOCK_AND_RELEASE(globalDevice, CreateFramebufferBuilder())
-        .SetRenderPass(renderpass)
-        .SetDimensions(640, 480)
-        .SetAttachment(0, gBufferView)
-        .SetAttachment(1, depthStencilView)
-        .GetResult();
-
     uint32_t drawCount = 0;
 
     for (Model* model : models) {
@@ -451,6 +494,8 @@ void Renderer::Render(nxt::Texture &texture) {
     cameraBuffer.TransitionUsage(nxt::BufferUsageBit::TransferDst);
     cameraBuffer.SetSubData(0, sizeof(layout::camera_block) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(&cameraBlock));
 
+    gBufferTexture.TransitionUsage(nxt::TextureUsageBit::OutputAttachment);
+
     auto commands = LOCK_AND_RELEASE(globalDevice, CreateCommandBufferBuilder());
 
     commands.TransitionBufferUsage(cameraBuffer, nxt::BufferUsageBit::Uniform);
@@ -474,6 +519,7 @@ void Renderer::Render(nxt::Texture &texture) {
     commands.SetBindGroup(0, cameraBindGroup);
     for (Model* model : models) {
         for (const DrawInfo& draw : model->GetCommands()) {
+
             auto modelBindGroup = LOCK_AND_RELEASE(globalDevice, CreateBindGroupBuilder())
                 .SetUsage(nxt::BindGroupUsage::Frozen)
                 .SetLayout(layout::modelLayout)
@@ -534,7 +580,7 @@ void Renderer::Render(nxt::Texture &texture) {
             commands.SetBindGroup(1, modelBindGroup);
             commands.SetBindGroup(2, computeBindGroup);
             commands.SetBindGroup(3, constantBindGroups[drawID]);
-            commands.Dispatch(640, 480, 1);
+            commands.Dispatch(1280, 960, 1);
 
             drawID++;
         }
@@ -543,7 +589,7 @@ void Renderer::Render(nxt::Texture &texture) {
     commands.EndComputePass();
 
     commands.TransitionBufferUsage(computeOutputBuffer, nxt::BufferUsageBit::TransferSrc);
-    commands.CopyBufferToTexture(computeOutputBuffer, 0, 0, texture, 0, 0, 0, 640, 480, 1, 0);
+    commands.CopyBufferToTexture(computeOutputBuffer, 0, 0, texture, 0, 0, 0, 1280, 960, 1, 0);
 
     auto cmds = commands.GetResult();
     LOCK_IN_SCOPE(globalDevice, [&](nxt::Device&) {

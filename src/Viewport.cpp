@@ -25,7 +25,7 @@ bool Viewport::ShouldQuit() const {
 
 void Viewport::Initialize() {
     swapchain = GetSwapChain(globalDevice.Get());
-    swapchain.Configure(nxt::TextureFormat::R8G8B8A8Unorm, 640, 480);
+    swapchain.Configure(nxt::TextureFormat::R8G8B8A8Unorm, nxt::TextureUsageBit::TransferDst, nxt::TextureUsageBit::TransferDst, 1280, 960);
 }
 
 void Viewport::Frame(Renderer* renderer) {

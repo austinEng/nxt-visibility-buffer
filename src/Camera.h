@@ -25,5 +25,5 @@ class Camera {
         mutable glm::vec3 _eyeDir;
         mutable bool _dirty;
         mutable glm::mat4 _view;
-        glm::mat4 _projection = glm::perspective(glm::radians(60.f), 640.f / 480, 0.1f, 2000.f);
+        glm::mat4 _projection = glm::perspective(glm::radians(60.f), 1280.f / 960, 0.1f, 2000.f);
 };

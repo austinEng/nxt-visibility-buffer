@@ -257,26 +257,26 @@ void Model::UpdateCommands() {
         const auto current = stack.back();
         stack.pop_back();
         const auto* node = current.first;
-        const auto& transform = current.second;
+        const auto& parent = current.second;
 
-        glm::mat4 model;
+        glm::mat4 transform(1.0);
         if (node->matrix.size() == 16) {
-            model = glm::make_mat4(node->matrix.data());
+            transform = glm::make_mat4(node->matrix.data());
         } else {
             if (node->scale.size() == 3) {
                 glm::vec3 scale = glm::make_vec3(node->scale.data());
-                model = glm::scale(model, scale);
+                transform = glm::scale(transform, scale);
             }
             if (node->rotation.size() == 4) {
                 glm::quat rotation = glm::make_quat(node->rotation.data());
-                model = glm::mat4_cast(rotation) * model;
+                transform = glm::mat4_cast(rotation) * transform;
             }
             if (node->translation.size() == 3) {
                 glm::vec3 translation = glm::make_vec3(node->translation.data());
-                model = glm::translate(model, translation);
+                transform = glm::translate(transform, translation);
             }
         }
-        model = transform * model;
+        glm::mat4 model = parent * transform;
 
         for (const auto& meshID : node->meshes) {
             const auto& mesh = scene.meshes.at(meshID);
@@ -296,35 +296,58 @@ void Model::UpdateCommands() {
                     }
 
                     const auto& indices = scene.accessors.at(prim.indices);
-                    if (indices.componentType != gl::UnsignedShort || indices.type != TINYGLTF_TYPE_SCALAR) {
-                        fprintf(stderr, "unsupported index accessor component type %d and type %d\n", indices.componentType, indices.type);
+                    if (indices.type != TINYGLTF_TYPE_SCALAR) {
+                        fprintf(stderr, "unsupported index accessor type %d\n", indices.type);
                         continue;
                     }
 
                     const auto& indexBufferView = scene.bufferViews.at(indices.bufferView);
                     const auto& indexBuffer = scene.buffers.at(indexBufferView.buffer);
 
-                    const unsigned short* indexBuffer16bit = reinterpret_cast<const unsigned short*>(&indexBuffer.data.at(indexBufferView.byteOffset));
-
-                    std::vector<unsigned int> indices32Bit(indices.count);
-                    for (size_t i = 0; i < indices.count; ++i) {
-                        indices32Bit[i] = indexBuffer16bit[i];
-                        vertexCount = std::max(indices32Bit[i] + 1, vertexCount);
-                    }
-                    vertices.resize(vertexCount);
-
                     uint32_t indexBufferSize = static_cast<uint32_t>(sizeof(unsigned int) * indices.count);
 
-                    LOCK_IN_SCOPE(globalDevice, [&](nxt::Device& device) {
-                        command.indexBuffer = device.CreateBufferBuilder()
-                            .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Index | nxt::BufferUsageBit::Storage)
-                            .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
-                            .SetSize(indexBufferSize)
-                            .GetResult();
-                        command.count = static_cast<uint32_t>(indices.count);
-                        command.indexBuffer.SetSubData(0, static_cast<uint32_t>(indexBufferSize) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(indices32Bit.data()));
-                        command.indexBufferView = command.indexBuffer.CreateBufferViewBuilder().SetExtent(0, indexBufferSize).GetResult();
-                    })
+                    if (indices.componentType == gl::UnsignedShort) {
+                        const unsigned short* indexBuffer16bit = reinterpret_cast<const unsigned short*>(&indexBuffer.data.at(indexBufferView.byteOffset + indices.byteOffset));
+                        std::vector<unsigned int> indices32Bit(indices.count);
+                        for (size_t i = 0; i < indices.count; ++i) {
+                            indices32Bit[i] = indexBuffer16bit[i];
+                            vertexCount = std::max(indices32Bit[i] + 1, vertexCount);
+                        }
+
+                        LOCK_IN_SCOPE(globalDevice, [&](nxt::Device& device) {
+                            command.indexBuffer = device.CreateBufferBuilder()
+                                .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Index | nxt::BufferUsageBit::Storage)
+                                .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
+                                .SetSize(indexBufferSize)
+                                .GetResult();
+                            command.count = static_cast<uint32_t>(indices.count);
+                            command.indexBuffer.SetSubData(0, static_cast<uint32_t>(indexBufferSize) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(indices32Bit.data()));
+                            command.indexBufferView = command.indexBuffer.CreateBufferViewBuilder().SetExtent(0, indexBufferSize).GetResult();
+                        })
+                    }
+                    else if (indices.componentType == gl::UnsignedInt) {
+                        const unsigned int* indexBuffer32bit = reinterpret_cast<const unsigned int*>(&indexBuffer.data.at(indexBufferView.byteOffset + indices.byteOffset));
+                        for (size_t i = 0; i < indices.count; ++i) {
+                            vertexCount = std::max(indexBuffer32bit[i] + 1, vertexCount);
+                        }
+
+                        LOCK_IN_SCOPE(globalDevice, [&](nxt::Device& device) {
+                            command.indexBuffer = device.CreateBufferBuilder()
+                                .SetAllowedUsage(nxt::BufferUsageBit::TransferDst | nxt::BufferUsageBit::Index | nxt::BufferUsageBit::Storage)
+                                .SetInitialUsage(nxt::BufferUsageBit::TransferDst)
+                                .SetSize(indexBufferSize)
+                                .GetResult();
+                            command.count = static_cast<uint32_t>(indices.count);
+                            command.indexBuffer.SetSubData(0, static_cast<uint32_t>(indexBufferSize) / sizeof(uint32_t), reinterpret_cast<const uint32_t*>(indexBuffer32bit));
+                            command.indexBufferView = command.indexBuffer.CreateBufferViewBuilder().SetExtent(0, indexBufferSize).GetResult();
+                        })
+                    }
+                    else {
+                        fprintf(stderr, "unsupported index accessor component type %d\n", indices.componentType);
+                        continue;
+                    }
+ 
+                    vertices.resize(vertexCount);
                 }
 
                 auto LoadAttribute = [&](const char* attribute,
@@ -414,9 +437,10 @@ void Model::UpdateCommands() {
                         }
                         glm::vec3 normal = *reinterpret_cast<const glm::vec3*>(&buffer.data.at(bufferView.byteOffset + accessor.byteOffset + i * accessor.byteStride));
                         normal = glm::normalize(normal);
-                        uint16_t x = static_cast<uint16_t>(((1 << 16) - 1) * (normal.x * 0.5 + 0.5));
-                        uint16_t y = static_cast<uint16_t>(((1 << 16) - 1) * (normal.y * 0.5 + 0.5));
-                        vertices[i].normal = (static_cast<uint32_t>(x) << 16) + static_cast<uint32_t>(y);
+                        //uint16_t x = static_cast<uint16_t>(((1 << 16) - 1) * (normal.x * 0.5 + 0.5));
+                        //uint16_t y = static_cast<uint16_t>(((1 << 16) - 1) * (normal.y * 0.5 + 0.5));
+                        //vertices[i].normal = (static_cast<uint32_t>(x) << 16) + static_cast<uint32_t>(y);
+                        vertices[i].normal = normal;
                     }
                 });
 
@@ -437,9 +461,10 @@ void Model::UpdateCommands() {
                             break;
                         }
                         glm::vec2 texCoord = *reinterpret_cast<const glm::vec2*>(&buffer.data.at(bufferView.byteOffset + accessor.byteOffset + i * accessor.byteStride));
-                        uint16_t x = static_cast<uint16_t>(((1 << 16) - 1) * texCoord.x);
+                        /* uint16_t x = static_cast<uint16_t>(((1 << 16) - 1) * texCoord.x);
                         uint16_t y = static_cast<uint16_t>(((1 << 16) - 1) * texCoord.y);
-                        vertices[i].texCoord = (static_cast<uint32_t>(x) << 16) + static_cast<uint32_t>(y);
+                        vertices[i].texCoord = (static_cast<uint32_t>(x) << 16) + static_cast<uint32_t>(y);*/
+                        vertices[i].texCoord = texCoord;
                     }
                 });
 
